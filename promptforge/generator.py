@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from promptforge.analyzers import (
@@ -32,13 +33,14 @@ def analyze_repository(
     registry: dict[str, Any],
     registry_url: str,
 ) -> PromptData:
-    discovered = discover_repo_sources(repo)
-    readme_path = discovered["readme"]
-    contributing_path = discovered["contributing"]
-    agents_path = discovered["agents"]
-    codeowners_path = discovered["codeowners"]
-    local_weights_path = discovered["local_weights"]
-    workflow_paths = list(discovered["workflows"] or [])
+    (
+        readme_path,
+        contributing_path,
+        agents_path,
+        codeowners_path,
+        local_weights_path,
+        workflow_paths,
+    ) = unpack_discovered_sources(discover_repo_sources(repo))
 
     readme_text = read_text(readme_path)
     contributing_text = read_text(contributing_path)
@@ -97,6 +99,30 @@ def analyze_repository(
         registry_url=registry_url,
     )
     return prompt_data
+
+
+def unpack_discovered_sources(
+    discovered: dict[str, Path | list[Path] | None],
+) -> tuple[Path | None, Path | None, Path | None, Path | None, Path | None, list[Path]]:
+    readme_path = as_optional_path(discovered.get("readme"))
+    contributing_path = as_optional_path(discovered.get("contributing"))
+    agents_path = as_optional_path(discovered.get("agents"))
+    codeowners_path = as_optional_path(discovered.get("codeowners"))
+    local_weights_path = as_optional_path(discovered.get("local_weights"))
+    workflows_value = discovered.get("workflows")
+    workflow_paths = list(workflows_value) if isinstance(workflows_value, list) else []
+    return (
+        readme_path,
+        contributing_path,
+        agents_path,
+        codeowners_path,
+        local_weights_path,
+        workflow_paths,
+    )
+
+
+def as_optional_path(value: Path | list[Path] | None) -> Path | None:
+    return value if isinstance(value, Path) else None
 
 
 def render_prompt(prompt_data: PromptData, mode: str) -> str:
@@ -208,12 +234,12 @@ def collect_unknowns(
 def collect_sources(
     *,
     repo: RepositoryContext,
-    readme_path,
-    contributing_path,
-    agents_path,
-    codeowners_path,
-    local_weights_path,
-    workflow_paths: list,
+    readme_path: Path | None,
+    contributing_path: Path | None,
+    agents_path: Path | None,
+    codeowners_path: Path | None,
+    local_weights_path: Path | None,
+    workflow_paths: list[Path],
     registry_url: str,
 ) -> list[str]:
     sources: list[str] = []
