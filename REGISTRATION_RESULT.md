@@ -68,6 +68,14 @@ This run shows that PromptForge is not only generating prompts. It is:
 - comparing them against a baseline
 - producing objective result artifacts and a report
 
+Current MVP boundary:
+
+- PromptForge now supports a baseline/frontier/challenger workflow with a frontier manifest and
+  primary/holdout task pools.
+- It is not yet a full multi-candidate prompt-search system or an automated challenger queue.
+- The registration value today is the objective evaluation loop and frontier challenge mechanism,
+  not a claim of already-complete prompt optimization.
+
 The current benchmark already shows at least one real task where the generated prompt outperformed
 the baseline under the same evaluation setup.
 

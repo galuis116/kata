@@ -15,16 +15,29 @@ REQUIRED_FILES = (
     "forbidden_paths.txt",
 )
 
+PLACEHOLDER_MARKERS = {
+    "task.md": (
+        "Describe the exact change the agent must make.",
+        "Describe what a valid final diff should achieve.",
+    ),
+    "checks.sh": ('echo "TODO: add repo-specific checks"',),
+    "rubric.md": (
+        "- Task goal is completed.",
+        "- Wrong task solved.",
+    ),
+}
+
 
 @dataclass(frozen=True)
 class EvalPackValidationResult:
     root: Path
     missing_files: list[str]
     empty_files: list[str]
+    placeholder_files: list[str]
 
     @property
     def is_valid(self) -> bool:
-        return not self.missing_files and not self.empty_files
+        return not self.missing_files and not self.empty_files and not self.placeholder_files
 
 
 def init_eval_pack(repo_ref: str, task_id: str, output_root: str | None = None) -> Path:
@@ -48,6 +61,7 @@ def validate_eval_pack(path: str) -> EvalPackValidationResult:
     root = Path(path).expanduser().resolve()
     missing_files: list[str] = []
     empty_files: list[str] = []
+    placeholder_files: list[str] = []
 
     for filename in REQUIRED_FILES:
         file_path = root / filename
@@ -56,11 +70,15 @@ def validate_eval_pack(path: str) -> EvalPackValidationResult:
             continue
         if file_path.stat().st_size == 0:
             empty_files.append(filename)
+            continue
+        if file_contains_placeholder(file_path, filename):
+            placeholder_files.append(filename)
 
     return EvalPackValidationResult(
         root=root,
         missing_files=missing_files,
         empty_files=empty_files,
+        placeholder_files=placeholder_files,
     )
 
 
@@ -95,6 +113,9 @@ def render_validation_result(result: EvalPackValidationResult) -> str:
     if result.empty_files:
         lines.append("Empty files:")
         lines.extend(f"- {name}" for name in result.empty_files)
+    if result.placeholder_files:
+        lines.append("Placeholder scaffold content still present:")
+        lines.extend(f"- {name}" for name in result.placeholder_files)
     return "\n".join(lines)
 
 
@@ -183,3 +204,11 @@ def write_file(path: Path, content: str) -> None:
 def make_executable(path: Path) -> None:
     current_mode = path.stat().st_mode
     path.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def file_contains_placeholder(path: Path, filename: str) -> bool:
+    markers = PLACEHOLDER_MARKERS.get(filename, ())
+    if not markers:
+        return False
+    content = path.read_text(encoding="utf-8")
+    return any(marker in content for marker in markers)

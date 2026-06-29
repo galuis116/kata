@@ -4,13 +4,13 @@ import json
 import os
 import shutil
 import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from promptforge.baseline import generate_baseline_prompt_from_repository
 from promptforge.config import resolve_registry_url
-from promptforge.eval_pack import discover_eval_pack_tasks
+from promptforge.eval_pack import EvalPackValidationResult, discover_eval_pack_tasks
 from promptforge.generator import generate_prompt_from_repository
 from promptforge.repository import resolve_repository
 
@@ -55,6 +55,8 @@ class EvalRunSummary:
     agent_command: str
     created_at: str
     tasks: list[TaskRunSummary]
+    run_kind: str = "eval"
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 def run_eval(
@@ -78,18 +80,63 @@ def run_eval(
         )
 
     resolved_registry_url = resolve_registry_url(registry_url)
-    task_names = [result.root.name for result in validations]
-    run_id = build_run_id(validations[0].root.parent.name if len(task_names) > 1 else task_names[0])
+    return run_prompt_variants(
+        repo_ref=repo_ref,
+        eval_pack_path=eval_pack_path,
+        mode=mode,
+        agent_command=agent_command,
+        prompt_variants=[
+            ("baseline", None),
+            ("generated", resolved_registry_url),
+        ],
+        output_root=output_root,
+        agent_timeout_seconds=agent_timeout_seconds,
+        checks_timeout_seconds=checks_timeout_seconds,
+        run_label=None,
+        run_kind="eval",
+    )
+
+
+def run_prompt_variants(
+    *,
+    repo_ref: str,
+    eval_pack_path: str,
+    mode: str,
+    agent_command: str,
+    prompt_variants: list[tuple[str, str | None]],
+    task_names: list[str] | None = None,
+    output_root: str | None = None,
+    agent_timeout_seconds: int | None = None,
+    checks_timeout_seconds: int | None = None,
+    run_label: str | None = None,
+    run_kind: str = "eval",
+) -> EvalRunSummary:
+    validations = discover_eval_pack_tasks(eval_pack_path)
+    invalid = [result for result in validations if not result.is_valid]
+    if invalid:
+        invalid_names = ", ".join(result.root.name for result in invalid)
+        raise ValueError(
+            "Eval pack is invalid. Run `promptforge eval-pack validate` first. "
+            f"Invalid task directories: {invalid_names}"
+        )
+    selected_validations = select_task_validations(validations, task_names)
+    task_ids = [result.root.name for result in selected_validations]
+    if run_label is not None:
+        run_name = run_label
+    elif len(task_ids) > 1:
+        run_name = selected_validations[0].root.parent.name
+    else:
+        run_name = task_ids[0]
+    run_id = build_run_id(run_name)
     runs_root = Path(output_root) if output_root else Path("runs")
     run_root = runs_root / run_id
     run_root.mkdir(parents=True, exist_ok=False)
 
     task_summaries: list[TaskRunSummary] = []
-    for validation in validations:
+    for validation in selected_validations:
         task_root = validation.root
         task_run_root = run_root / "tasks" / task_root.name
         task_run_root.mkdir(parents=True, exist_ok=False)
-
         task_snapshot = task_run_root / "eval_pack"
         shutil.copytree(task_root, task_snapshot)
 
@@ -99,25 +146,15 @@ def run_eval(
             copy_repository(repo.root, repo_snapshot)
             variants = [
                 run_variant(
-                    variant_name="baseline",
-                    prompt_text=generate_baseline_prompt_from_repository(repo, mode),
-                    variant_root=task_run_root / "baseline",
-                    repo_snapshot=repo_snapshot,
-                    eval_pack_root=task_snapshot,
-                    repo_ref=task_repo_ref,
-                    mode=mode,
-                    agent_command=agent_command,
-                    agent_timeout_seconds=agent_timeout_seconds,
-                    checks_timeout_seconds=checks_timeout_seconds,
-                ),
-                run_variant(
-                    variant_name="generated",
-                    prompt_text=generate_prompt_from_repository(
-                        repo,
-                        mode,
-                        resolved_registry_url,
+                    variant_name=variant_name,
+                    prompt_text=resolve_prompt_text(
+                        variant_name=variant_name,
+                        prompt_value=prompt_value,
+                        repo_ref=task_repo_ref,
+                        repo=repo,
+                        mode=mode,
                     ),
-                    variant_root=task_run_root / "generated",
+                    variant_root=task_run_root / variant_name,
                     repo_snapshot=repo_snapshot,
                     eval_pack_root=task_snapshot,
                     repo_ref=task_repo_ref,
@@ -125,13 +162,14 @@ def run_eval(
                     agent_command=agent_command,
                     agent_timeout_seconds=agent_timeout_seconds,
                     checks_timeout_seconds=checks_timeout_seconds,
-                ),
+                )
+                for variant_name, prompt_value in prompt_variants
             ]
 
         task_summaries.append(
             TaskRunSummary(
                 task_id=task_root.name,
-                task_path=str(task_root),
+                task_path=str(task_run_root),
                 task_repo_ref=task_repo_ref,
                 variants=variants,
             )
@@ -142,10 +180,12 @@ def run_eval(
         requested_repo_ref=repo_ref,
         eval_pack=str(Path(eval_pack_path).expanduser().resolve()),
         mode=mode,
-        registry_url=resolved_registry_url,
+        registry_url=None,
         agent_command=agent_command,
         created_at=datetime.now(UTC).isoformat(),
         tasks=task_summaries,
+        run_kind=run_kind,
+        metadata={"task_count": str(len(task_summaries))},
     )
     write_summary(run_root / "run_summary.json", summary)
     return summary
@@ -370,3 +410,33 @@ def copy_repository(source: Path, target: Path) -> None:
 
 def write_summary(path: Path, summary: EvalRunSummary) -> None:
     path.write_text(json.dumps(asdict(summary), indent=2) + "\n", encoding="utf-8")
+
+
+def resolve_prompt_text(
+    *,
+    variant_name: str,
+    prompt_value: str | None,
+    repo_ref: str,
+    repo: object,
+    mode: str,
+) -> str:
+    if variant_name == "baseline" and prompt_value is None:
+        return generate_baseline_prompt_from_repository(repo, mode)
+    if variant_name == "generated":
+        return generate_prompt_from_repository(repo, mode, prompt_value)
+    if prompt_value is None:
+        raise ValueError(f"Prompt text is required for variant: {variant_name}")
+    return prompt_value
+
+
+def select_task_validations(
+    validations: list[EvalPackValidationResult],
+    task_names: list[str] | None,
+) -> list[EvalPackValidationResult]:
+    if not task_names:
+        return validations
+    by_name = {validation.root.name: validation for validation in validations}
+    missing = [task_name for task_name in task_names if task_name not in by_name]
+    if missing:
+        raise ValueError(f"Unknown eval-pack tasks: {', '.join(missing)}")
+    return [by_name[task_name] for task_name in task_names]

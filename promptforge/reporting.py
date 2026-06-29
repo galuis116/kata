@@ -184,7 +184,7 @@ def build_variant_report(
 
 def diff_paths(source: Path, target: Path) -> list[str]:
     completed = subprocess.run(
-        ["git", "diff", "--no-index", "--name-only", str(source), str(target)],
+        ["git", "diff", "--no-index", "--name-status", str(source), str(target)],
         capture_output=True,
         text=True,
         check=False,
@@ -192,22 +192,35 @@ def diff_paths(source: Path, target: Path) -> list[str]:
     if completed.returncode not in {0, 1}:
         raise RuntimeError(completed.stderr.strip() or "Unable to diff eval workspaces.")
 
-    prefixes = [
-        target.as_posix().rstrip("/") + "/",
-        target.resolve().as_posix().rstrip("/") + "/",
-    ]
+    source_prefixes = path_prefixes(source)
+    target_prefixes = path_prefixes(target)
     paths: list[str] = []
     for line in completed.stdout.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        normalized = stripped.replace("\\", "/")
-        for prefix in prefixes:
-            if normalized.startswith(prefix):
-                normalized = normalized.removeprefix(prefix)
-                break
+        status, _, raw_path = stripped.partition("\t")
+        if not raw_path:
+            continue
+        prefixes = source_prefixes if status.startswith(("D", "M", "R", "C")) else target_prefixes
+        normalized = normalize_diff_path(raw_path, prefixes)
         paths.append(normalized)
     return sorted(set(paths))
+
+
+def path_prefixes(root: Path) -> list[str]:
+    return [
+        root.as_posix().rstrip("/") + "/",
+        root.resolve().as_posix().rstrip("/") + "/",
+    ]
+
+
+def normalize_diff_path(path: str, prefixes: list[str]) -> str:
+    normalized = path.replace("\\", "/")
+    for prefix in prefixes:
+        if normalized.startswith(prefix):
+            return normalized.removeprefix(prefix)
+    return normalized
 
 
 def read_path_rules(path: Path) -> list[str]:
@@ -254,26 +267,23 @@ def matches_any_rule(path: str, rules: list[str]) -> bool:
 
 
 def compare_variants(baseline: dict[str, Any], generated: dict[str, Any]) -> str:
-    baseline_score = baseline["success_score"]
-    generated_score = generated["success_score"]
-    if baseline_score == 0 and generated_score == 0:
-        return "Invalid run"
-    if generated_score > baseline_score:
+    baseline_success = variant_completed_task(baseline)
+    generated_success = variant_completed_task(generated)
+    if generated_success and not baseline_success:
         return "PromptForge win"
-    if baseline_score > generated_score:
+    if baseline_success and not generated_success:
         return "Baseline win"
+    if not baseline["agent_ok"] and not generated["agent_ok"]:
+        return "Invalid run"
     return "Tie"
 
 
 def score_variant(*, agent_ok: bool, checks_passed: bool, path_policy_passed: bool) -> int:
-    score = 0
-    if agent_ok:
-        score += 1
-    if path_policy_passed:
-        score += 2
-    if checks_passed:
-        score += 4
-    return score
+    return int(agent_ok and checks_passed and path_policy_passed)
+
+
+def variant_completed_task(variant: dict[str, Any]) -> bool:
+    return bool(variant["agent_ok"] and variant["task_solved"] and variant["path_policy_passed"])
 
 
 def render_paths(paths: list[str]) -> str:
