@@ -29,19 +29,22 @@ from promptforge.reporting import render_report
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="promptforge",
-        description="Generate and evaluate repo-specific coding-agent prompts.",
+        description="Initialize and evaluate repo-specific coding-agent prompts.",
     )
     parser.add_argument("--version", action="version", version="promptforge 0.1.0")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    generate = subparsers.add_parser("generate", help="Generate a repo-specific prompt.")
+    generate = subparsers.add_parser(
+        "generate",
+        help="Generate an initial repo-specific prompt from repo sources.",
+    )
     generate.add_argument("--repo", required=True, help="Path or URL of the target repo.")
     generate.add_argument(
         "--mode",
         choices=["contributor", "reviewer"],
         default="contributor",
-        help="Prompt mode to generate.",
+        help="Prompt mode to initialize.",
     )
     generate.add_argument(
         "--registry-url",
@@ -50,7 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     generate.set_defaults(handler=handle_generate)
 
-    baseline = subparsers.add_parser("baseline", help="Create or print a baseline prompt.")
+    baseline = subparsers.add_parser(
+        "baseline",
+        help="Create or print the fixed generic baseline prompt.",
+    )
     baseline.add_argument("--repo", required=True, help="Path or URL of the target repo.")
     baseline.add_argument(
         "--mode",
@@ -60,7 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     baseline.set_defaults(handler=handle_baseline)
 
-    eval_cmd = subparsers.add_parser("eval", help="Run baseline vs generated prompt evals.")
+    eval_cmd = subparsers.add_parser(
+        "eval",
+        help="Run the baseline-vs-generated reference eval workflow.",
+    )
     eval_cmd.add_argument("--repo", required=True, help="Path or URL of the target repo.")
     eval_cmd.add_argument("--eval-pack", required=True, help="Path to the repo eval pack.")
     eval_cmd.add_argument(
@@ -102,7 +111,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_cmd.set_defaults(handler=handle_eval)
 
-    frontier = subparsers.add_parser("frontier", help="Manage baseline/frontier prompt state.")
+    frontier = subparsers.add_parser(
+        "frontier",
+        help="Manage baseline/frontier prompt state for competition.",
+    )
     frontier_subparsers = frontier.add_subparsers(dest="frontier_command", required=True)
 
     frontier_init = frontier_subparsers.add_parser(
@@ -119,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     frontier_init.add_argument(
         "--registry-url",
         default=None,
-        help="Optional SN74 registry JSON URL for generated frontier prompts.",
+        help="Optional SN74 registry JSON URL for initializing frontier prompts.",
     )
     frontier_init.add_argument(
         "--primary-task",
@@ -156,7 +168,8 @@ def build_parser() -> argparse.ArgumentParser:
     frontier_promote.set_defaults(handler=handle_frontier_promote)
 
     challenge = subparsers.add_parser(
-        "challenge", help="Run baseline/frontier/candidate competition for one repo and mode."
+        "challenge",
+        help="Run baseline/frontier/challenger competition for one repo and mode.",
     )
     challenge.add_argument("--eval-pack", required=True, help="Path to the repo eval pack.")
     challenge.add_argument(

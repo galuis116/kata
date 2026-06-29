@@ -6,7 +6,8 @@ It evaluates repo-specific agent prompts on pinned benchmark tasks and only
 calls a prompt better when it solves more verified work under the same
 conditions.
 
-PromptForge is not a prompt library. The main product is the evaluation system:
+PromptForge is not a prompt library. The main product is the evaluation and
+competition system:
 
 - fixed benchmark tasks
 - fixed baseline prompt
@@ -18,7 +19,7 @@ PromptForge is not a prompt library. The main product is the evaluation system:
 
 PromptForge currently supports:
 
-- repo-specific prompt generation from repo sources
+- repo-specific prompt initialization from repo sources
 - fixed generic baseline prompts
 - eval-pack validation for pinned repo tasks
 - objective eval runs using real agent commands
@@ -31,6 +32,12 @@ Current MVP boundary:
 - it is a working manual competition system
 - it is not yet an automated challenger queue
 - it is not yet a full prompt-search engine
+
+Prompt generation exists in this repo as a bootstrap helper:
+
+- it can create an initial repo-specific prompt from repo files
+- that prompt can seed the first frontier
+- it is one source of challengers, not the main product
 
 ## Core Idea
 
@@ -64,6 +71,32 @@ Competition flow:
 
 The baseline is not the prompt miners should use in production. It is the fixed
 control used to prove that repo-specific optimization is adding value.
+
+## How To Think About The Workflow
+
+PromptForge has two separate jobs:
+
+1. `initialize prompts`
+   Create a starting repo-specific prompt and a fixed baseline.
+2. `evaluate prompts`
+   Compare baseline, frontier, and challenger prompts on the same benchmark.
+
+That is why the repo has both prompt-creation commands and competition
+commands.
+
+The simplest mental model is:
+
+- `baseline`: fixed generic control
+- `frontier`: current best verified prompt
+- `challenger`: new candidate prompt
+
+The usual workflow is:
+
+1. define a benchmark pack
+2. initialize a frontier for that repo and mode
+3. use `generate` if you want a first repo-specific prompt to seed the frontier
+4. challenge the frontier with better candidate prompts
+5. promote the challenger if it wins primary and holdout evaluation
 
 ## Repository Layout
 
@@ -105,7 +138,8 @@ That manifest currently defines:
 
 ## Quickstart
 
-Generate a repo-specific prompt:
+Generate a repo-specific prompt for initialization or as a challenger starting
+point:
 
 ```bash
 uv run python -m promptforge generate \
@@ -210,6 +244,7 @@ What is already solid:
 - benchmark-pack validation
 - stricter report and path-policy handling
 - frontier challenge workflow
+- prompt initialization for seeding a frontier
 - regression tests for evaluator behavior
 
 What is still planned:

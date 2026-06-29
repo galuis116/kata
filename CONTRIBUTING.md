@@ -54,10 +54,11 @@ Good contributions:
 - better task coverage
 - clearer baseline/frontier/challenger workflow
 - safer reporting and anti-gaming logic
-- better contributor and reviewer prompt generation
+- better contributor and reviewer prompt initialization
 
 Lower-priority contributions:
 
 - broad prompt rewrites without benchmark evidence
 - subjective prompt-style changes without measured improvement
-
+- changes that treat prompt generation as the main product rather than as a
+  source of frontier challengers
