@@ -192,3 +192,16 @@ Current decision actions are:
 - `merge`
 
 These actions are intended to drive a separate GitHub bot cleanly.
+
+## Promotion
+
+If the decision is `merge`, the bot or maintainer can promote the verified
+submission into the frontier:
+
+```bash
+uv run kata frontier promote \
+  --challenge-run <challenge-summary.json> \
+  --submission-path <submission-dir>
+```
+
+This re-checks freshness before mutating the frontier artifact.

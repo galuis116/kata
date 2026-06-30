@@ -394,7 +394,8 @@ Promote a winning challenger:
 
 ```bash
 uv run kata frontier promote \
-  --challenge-run runs/<challenge-run>/challenge_summary.json
+  --challenge-run runs/<challenge-run>/challenge_summary.json \
+  --submission-path submissions/<repo-pack>/<mode>/<submission-id>
 ```
 
 ## Real Agent Commands

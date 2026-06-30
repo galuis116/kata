@@ -21,6 +21,7 @@ from kata.submissions import (
     hash_submission_bundle,
     init_submission,
     inspect_pull_request,
+    promote_submission_result,
     validate_submission,
     verify_submission_result,
 )
@@ -849,3 +850,95 @@ def test_decide_submission_action_returns_close_for_loser(
     result = decide_submission_action(str(submission_root), str(summary_path))
 
     assert result.action == PR_ACTION_CLOSE_LOSING
+
+
+def test_promote_submission_result_updates_frontier_for_verified_winner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-promote",
+        output_root=str(repo_root / "submissions"),
+    )
+    candidate_text = (
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    return {\"success\": True, \"diff\": \"promoted\"}\n"
+    )
+    (submission_root / "agent.py").write_text(candidate_text, encoding="utf-8")
+    candidate_hash = hash_submission_bundle(submission_root)
+    summary_path = tmp_path / "challenge_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            challenge_summary_payload(
+                pack_root=pack_root,
+                submission_root=submission_root,
+                frontier_artifact_hash=sha256_directory(
+                    pack_root / "agents" / "contributor" / "frontier",
+                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+                ),
+                candidate_artifact_hash=candidate_hash,
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = promote_submission_result(str(submission_root), str(summary_path))
+
+    frontier_agent = pack_root / "agents" / "contributor" / "frontier" / "agent.py"
+    assert frontier_agent.read_text(encoding="utf-8") == candidate_text
+    assert (
+        manifest.modes["contributor"].frontier_artifact_hash
+        == candidate_hash
+    )
+    assert manifest.modes["contributor"].frontier_source == "challenge-1"
+
+
+def test_promote_submission_result_rejects_stale_submission(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-stale-promote",
+        output_root=str(repo_root / "submissions"),
+    )
+    candidate_text = (
+        "def solve(repo_path, issue, model, api_base, api_key):\n"
+        "    return {\"success\": True, \"diff\": \"stale\"}\n"
+    )
+    (submission_root / "agent.py").write_text(candidate_text, encoding="utf-8")
+    summary_path = tmp_path / "challenge_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            challenge_summary_payload(
+                pack_root=pack_root,
+                submission_root=submission_root,
+                frontier_artifact_hash=sha256_text("# stale-frontier\n"),
+                candidate_artifact_hash=hash_submission_bundle(submission_root),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    try:
+        promote_submission_result(str(submission_root), str(summary_path))
+    except ValueError as exc:
+        assert "Submission is not safe to promote." in str(exc)
+        assert "frontier artifact has changed" in str(exc)
+    else:
+        raise AssertionError("Expected stale submission promotion to be rejected.")

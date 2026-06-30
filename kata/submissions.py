@@ -25,6 +25,7 @@ from kata.challenge import (
 from kata.config import resolve_validator_model
 from kata.frontier import (
     load_frontier_manifest,
+    promote_frontier_artifact,
     resolve_baseline_artifact_hash,
     resolve_frontier_artifact_hash,
 )
@@ -552,6 +553,30 @@ def decide_submission_action(
         reasons=losing_reasons,
         promotion_ready=verification.promotion_ready,
         auto_merge_ready=False,
+    )
+
+
+def promote_submission_result(
+    submission_path: str,
+    challenge_summary_path: str,
+):
+    verification = verify_submission_result(submission_path, challenge_summary_path)
+    if not verification.auto_merge_ready:
+        raise ValueError(
+            "Submission is not safe to promote. "
+            + "; ".join(
+                verification.reasons
+                or ["submission result is not auto-merge ready"]
+            )
+        )
+
+    summary = load_challenge_summary(challenge_summary_path)
+    return promote_frontier_artifact(
+        eval_pack_path=Path(summary.manifest_path).parent.as_posix(),
+        mode=summary.mode,
+        candidate_artifact_path=verification.submission_path,
+        source=summary.run_id,
+        evaluator_version=summary.evaluator_version,
     )
 
 

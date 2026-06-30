@@ -19,7 +19,6 @@ from kata.frontier import (
     DEFAULT_PROMOTION_MARGIN_POINTS,
     init_frontier,
     load_frontier_manifest,
-    promote_frontier_artifact,
     render_frontier_json,
     render_frontier_manifest,
 )
@@ -29,6 +28,7 @@ from kata.submissions import (
     evaluate_submission,
     init_submission,
     inspect_pull_request,
+    promote_submission_result,
     read_changed_paths_file,
     render_pull_request_inspection,
     render_submission_decision,
@@ -117,6 +117,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--challenge-run",
         required=True,
         help="Path to a challenge_summary.json file produced by `kata challenge`.",
+    )
+    frontier_promote.add_argument(
+        "--submission-path",
+        default=None,
+        help=(
+            "Optional path to submissions/<repo-pack>/<mode>/<submission-id>. "
+            "Defaults to the candidate artifact recorded in the challenge summary."
+        ),
     )
     frontier_promote.add_argument("--json", action="store_true")
     frontier_promote.set_defaults(handler=handle_frontier_promote)
@@ -430,17 +438,9 @@ def handle_frontier_show(args: argparse.Namespace) -> int:
 
 def handle_frontier_promote(args: argparse.Namespace) -> int:
     summary = load_challenge_summary(args.challenge_run)
-    if not summary.promotion_ready:
-        raise ValueError(
-            "Challenge is not promotion-ready. "
-            f"Reason: {summary.promotion_reason}"
-        )
-    manifest = promote_frontier_artifact(
-        eval_pack_path=Path(summary.manifest_path).parent.as_posix(),
-        mode=summary.mode,
-        candidate_artifact_path=summary.candidate_artifact,
-        source=summary.run_id,
-        evaluator_version=summary.evaluator_version,
+    manifest = promote_submission_result(
+        args.submission_path or summary.candidate_artifact,
+        args.challenge_run,
     )
     print(
         render_frontier_json(manifest)

@@ -40,6 +40,10 @@ For each miner PR, the bot should do this:
 8. close the PR if it loses
 9. promote the frontier and merge the PR if it wins
 
+The promote step should use the validated submission path together with the
+recorded challenge run, so Kata re-checks freshness before mutating
+`frontier.json`.
+
 ## Why The Bot Is Separate
 
 - Kata stays clean as the engine
