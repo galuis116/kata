@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 BENCHMARKS_ROOT_ENV = "KATA_BENCHMARKS_ROOT"
+PRIVATE_BENCHMARKS_ROOT_ENV = "KATA_PRIVATE_BENCHMARKS_ROOT"
 REGISTRY_MARKER_FILENAME = "kata-benchmark-registry.json"
 DEFAULT_BENCHMARKS_DIR = "benchmarks"
 KATA_REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +76,29 @@ def resolve_eval_pack_path(
             f"benchmark root configured by {BENCHMARKS_ROOT_ENV}."
         )
     return pack_path.resolve()
+
+
+def resolve_private_eval_pack_path(
+    eval_pack_ref: str,
+    *,
+    require_exists: bool = True,
+) -> Path:
+    private_root = os.environ.get(PRIVATE_BENCHMARKS_ROOT_ENV)
+    if not private_root:
+        raise FileNotFoundError(
+            "Private holdout benchmark root is not configured. "
+            f"Set {PRIVATE_BENCHMARKS_ROOT_ENV} on the validator."
+        )
+    direct_path = Path(eval_pack_ref).expanduser()
+    if direct_path.exists():
+        return direct_path.resolve()
+    if looks_like_path(eval_pack_ref):
+        raise FileNotFoundError(f"Private eval pack path does not exist: {direct_path}")
+    return resolve_eval_pack_path(
+        eval_pack_ref,
+        benchmarks_root=private_root,
+        require_exists=require_exists,
+    )
 
 
 def ensure_active_repo_pack(

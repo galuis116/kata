@@ -51,12 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     frontier = subparsers.add_parser(
         "frontier",
-        help="Manage baseline/frontier agent state for competition.",
+        help="Manage king/frontier agent state for competition.",
     )
     frontier_subparsers = frontier.add_subparsers(dest="frontier_command", required=True)
 
     frontier_init = frontier_subparsers.add_parser(
-        "init", help="Create baseline/frontier seed agents and a frontier manifest."
+        "init", help="Create an initial king/frontier seed agent and a frontier manifest."
     )
     frontier_init.add_argument("--repo", required=True, help="Path or URL of the target repo.")
     frontier_init.add_argument(
@@ -139,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     challenge = subparsers.add_parser(
         "challenge",
-        help="Run baseline/frontier/challenger competition for one repo and mode.",
+        help="Run frontier/challenger competition for one repo and mode.",
     )
     challenge.add_argument(
         "--eval-pack",

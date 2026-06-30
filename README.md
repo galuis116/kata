@@ -11,7 +11,7 @@ and competition system:
 
 - fixed benchmark tasks
 - fixed lane state
-- current frontier artifact
+- current king/frontier artifact
 - challenger agent evaluation
 - objective promotion rules
 - public king visibility with private live benchmark storage
@@ -21,29 +21,27 @@ and competition system:
 Kata currently supports:
 
 - repo-specific benchmark lanes
-- fixed generic baseline lane artifacts
 - eval-pack validation for pinned repo tasks
 - objective eval runs using real agent commands
-- baseline/frontier/challenger competition flow
+- king/challenger competition flow
 - primary and holdout task pools
-- manual frontier promotion after a successful challenge
+- frontier promotion after a successful challenge
 - PR-submission scaffolding and validation for miner challenger agents
 - stale-result verification against the current frontier
 - PR decision primitives for external bot workflows
 
-Current MVP boundary:
+Current boundary:
 
-- it is a working manual competition system
-- it has the engine primitives for challenger submissions
+- it is the evaluation engine
+- it has the engine primitives for PR-based challenger submissions
 - it is not the GitHub bot itself
-- it is not yet a full private-submission production validator
-- miner submission transport remains PR-based by design
+- always-on GitHub automation lives in `kata-bot`
 
 Transition note:
 
 - miner submissions now use the agent bundle contract:
   `agent.py`, `agent_manifest.json`, and optional `helpers/*.py`
-- frontier and baseline lane state now use seeded agent artifacts
+- frontier lane state now uses seeded agent artifacts
 
 ## Current MVP Scope
 
@@ -82,22 +80,25 @@ Current validator runtime policy:
 
 ## Competition Model
 
-Kata uses three competition roles for each repo and mode:
+Kata uses two competition roles for each repo and mode:
 
-- `baseline`: fixed generic control artifact
 - `frontier`: current best verified artifact
 - `challenger`: new candidate agent
 
 Competition flow:
 
 1. initialize a frontier manifest for a repo and mode
-2. evaluate `baseline`, `frontier`, and `challenger` on the same primary pool
-3. if the challenger beats the frontier, retest on the holdout pool
-4. only promote if the challenger also beats the frontier on holdout
-5. challenger must also clear the configured promotion margin for that lane
+2. evaluate `frontier` and `challenger` on the same public pool
+3. if the challenger clears the public margin, evaluate on the holdout pool
+4. only promote if the challenger also avoids regressing on holdout
 
-The baseline is not the artifact miners should use in production. It is the
-fixed control used to prove that repo-specific optimization is adding value.
+Current live Taopedia rule:
+
+- total tasks per duel: `20`
+- public pool: `10` tasks selected randomly from the live public task set
+- holdout pool: `10` live private tasks
+- candidate must score at least `frontier + 2` on the public pool
+- candidate must score at least `frontier` on the holdout pool
 
 ## Benchmark Provenance
 
@@ -121,17 +122,16 @@ Kata's proposed benchmark score model is defined in
 Kata currently has two separate jobs:
 
 1. `initialize lane state`
-   Seed the starting baseline/frontier artifacts for a repo lane.
+   Seed the starting frontier artifact for a repo lane.
 2. `evaluate challengers`
-   Compare baseline, frontier, and challenger artifacts on the same benchmark.
+   Compare frontier and challenger artifacts on the same benchmark.
 
 That is why the repo has both initialization helpers and competition commands.
 Today, initialization still uses source-grounded repo analysis to seed the
-first baseline/frontier agents, but the competition itself is agent-vs-agent.
+first king/frontier agent, but the competition itself is agent-vs-agent.
 
 The simplest mental model is:
 
-- `baseline`: fixed generic control
 - `frontier`: current best verified artifact
 - `challenger`: new candidate agent
 
@@ -139,22 +139,24 @@ Public/private visibility model:
 
 - `kata` is the public miner-facing repo
 - the current king is mirrored publicly under `kings/<repo-pack>/<mode>/`
-- live primary/holdout tasks remain private in `kata-benchmarks`
+- live public tasks are stored in the public benchmark registry
+- live private holdout tasks are stored only in the private benchmark registry
 - retired tasks may be exported into public `public_archive/` only after they
   leave all live pool versions permanently
 
 The usual workflow is:
 
-1. define a benchmark pack
+1. define public and private benchmark pools
 2. initialize a frontier for that repo and mode
-3. seed the lane
-4. challenge the frontier with better candidate agents
-5. promote the challenger if it wins primary and holdout evaluation
+3. accept miner PRs under `submissions/`
+4. challenge the frontier with candidate agents
+5. promote the challenger only if it wins under the live public/private rules
 
 ## Repository Layout
 
 - `kata/`: current core package and CLI
-- external `kata-benchmarks` repo: canonical benchmark source
+- external `kata-benchmarks` repo: public benchmark source
+- external `kata-benchmarks-private` repo: hidden holdout benchmark source
 - external `kata-bot` repo: GitHub integration and PR orchestration
 - `submissions/`: miner challenger agents submitted by PR
 - `kings/`: public mirror of the currently promoted king per repo/mode
@@ -162,11 +164,14 @@ The usual workflow is:
 - `scripts/`: adapter commands for real agent evaluation
 - `tests/`: regression tests for evaluator behavior
 
-Tracked benchmark artifacts may also include:
+Tracked benchmark artifacts include:
 
-- `frontier.json`: repo competition manifest
-- `agents/<mode>/baseline/`
-- `agents/<mode>/frontier/`
+- public `frontier.json` in `kata-benchmarks`
+- private `frontier.private.json` in `kata-benchmarks-private`
+
+Live king code is stored in:
+
+- `kings/<repo-pack>/<mode>/`
 
 Generated eval runs are written to `runs/` and are ignored by git.
 
@@ -201,7 +206,7 @@ Current validation rules:
 - bundle files must not contain symlinks
 - bundle files must not reference validator/provider secret env vars directly
 - bundle files must not contain obvious hardcoded secret tokens
-- challenger bundles must not duplicate the current baseline/frontier artifact
+- challenger bundles must not duplicate the current king/frontier artifact
 
 Recommended identity convention:
 
@@ -233,12 +238,18 @@ The registry can also declare the current active competition subset:
 - `active_repo_packs`
 - `default_repo_pack`
 
-That benchmark repo is the canonical source of:
+That benchmark state is split like this:
 
-- benchmark task folders
-- `frontier.json`
-- `agents/<mode>/baseline/`
-- `agents/<mode>/frontier/`
+- `kata-benchmarks`
+  - benchmark task folders
+  - `frontier.json`
+  - public-task pool metadata
+- `kata-benchmarks-private`
+  - hidden holdout tasks
+  - `frontier.private.json`
+
+The current king code is not stored in either benchmark repo. It is stored in
+`kata/kings/...`.
 
 Kata still uses the same file-based task format, but the benchmark
 content should live in the benchmark registry repo, not inside the main
@@ -354,8 +365,8 @@ uv run kata submission verify \
   --challenge-run runs/<challenge-run>/challenge_summary.json
 ```
 
-That final verification step matters because a challenger result becomes stale if
-another PR has already replaced the frontier.
+That final verification step matters because a challenger result becomes stale
+if another PR has already replaced the frontier.
 
 Convert verification into a PR action:
 
@@ -380,11 +391,12 @@ Initialize a frontier manifest:
 uv run kata frontier init \
   --repo /path/to/target-repo \
   --eval-pack <repo-pack> \
-  --mode contributor \
-  --primary-task task-a \
-  --primary-task task-b \
-  --holdout-task task-c
+  --mode contributor
 ```
+
+`--primary-task` and `--holdout-task` are optional explicit overrides. The
+current live Taopedia design instead uses `10` random public live tasks plus
+`10` private holdout tasks from the configured manifests.
 
 Inspect the current frontier:
 
@@ -435,14 +447,11 @@ What is already solid:
 - evaluator-version and benchmark-provenance recording
 - validator-owned `Qwen3-32B` runtime policy
 - submission anti-cheat and bundle-policy validation
-- seeded baseline/frontier agent initialization
+- seeded initial king/frontier agent initialization
 - regression tests for evaluator behavior
 
 What is still planned:
 
-- checked-in public benchmark packs
-- automated challenger submission and queueing
-- automated promotion policy
 - larger benchmark coverage
 - stronger reviewer-mode examples
 - stronger anti-cheat and bundle-policy validation

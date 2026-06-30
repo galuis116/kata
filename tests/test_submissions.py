@@ -3,14 +3,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from kata.agent_bundle import AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME, write_agent_manifest
+from kata.agent_bundle import (
+    AGENT_ENTRY_FILENAME,
+    AGENT_MANIFEST_FILENAME,
+    write_agent_manifest,
+)
 from kata.frontier import (
     FRONTIER_SCHEMA_VERSION,
+    PRIMARY_SELECTION_RANDOM_LIVE,
     FrontierManifest,
     FrontierModeConfig,
     write_frontier_manifest,
 )
-from kata.provenance import sha256_directory, sha256_text
+from kata.provenance import pool_fingerprint, sha256_directory, sha256_text
 from kata.submissions import (
     PR_ACTION_CLOSE_INVALID,
     PR_ACTION_CLOSE_LOSING,
@@ -61,6 +66,7 @@ def write_registry(
 
 def write_frontier_pack(registry_root: Path, repo_pack: str, repo_ref: str) -> Path:
     pack_root = registry_root / "benchmarks" / repo_pack
+    write_eval_task(pack_root / "task-a")
     artifact_root = pack_root / "agents" / "contributor"
     baseline_root = artifact_root / "baseline"
     frontier_root = artifact_root / "frontier"
@@ -92,7 +98,7 @@ def write_frontier_pack(registry_root: Path, repo_pack: str, repo_ref: str) -> P
                     frontier_root,
                     include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
                 ),
-                primary_pool_fingerprint="a" * 64,
+                primary_pool_fingerprint=pool_fingerprint([pack_root / "task-a"]),
                 holdout_pool_fingerprint=None,
                 frontier_updated_at="2026-06-29T00:00:00+00:00",
                 frontier_source="seed",
@@ -114,6 +120,7 @@ def challenge_summary_payload(
     baseline_artifact = pack_root / "agents" / "contributor" / "baseline"
     frontier_artifact = pack_root / "agents" / "contributor" / "frontier"
     candidate_artifact = submission_root
+    primary_fingerprint = pool_fingerprint([pack_root / "task-a"])
     return {
         "schema_version": 4,
         "run_id": "challenge-1",
@@ -130,7 +137,7 @@ def challenge_summary_payload(
         ),
         "frontier_artifact_hash": frontier_artifact_hash,
         "candidate_artifact_hash": candidate_artifact_hash,
-        "primary_pool_fingerprint": "a" * 64,
+        "primary_pool_fingerprint": primary_fingerprint,
         "holdout_pool_fingerprint": None,
         "promotion_margin_points": 3.0,
         "created_at": "2026-06-29T00:00:00+00:00",
@@ -148,6 +155,22 @@ def challenge_summary_payload(
         "promotion_ready": True,
         "promotion_reason": "candidate cleared the primary score margin",
     }
+
+
+def write_eval_task(task_root: Path) -> None:
+    task_root.mkdir(parents=True, exist_ok=True)
+    (task_root / "task.md").write_text("# task\n", encoding="utf-8")
+    (task_root / "repo_ref.txt").write_text(
+        "https://github.com/example/repo.git@test\n",
+        encoding="utf-8",
+    )
+    (task_root / "checks.sh").write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\ntrue\n",
+        encoding="utf-8",
+    )
+    (task_root / "rubric.md").write_text("# rubric\n", encoding="utf-8")
+    (task_root / "allowed_paths.txt").write_text("src/\n", encoding="utf-8")
+    (task_root / "forbidden_paths.txt").write_text("", encoding="utf-8")
 
 
 def test_validate_submission_accepts_scoped_submission_pr(
@@ -836,6 +859,73 @@ def test_verify_submission_result_detects_validator_model_change(
     assert not result.benchmark_is_current
     assert not result.auto_merge_ready
     assert "Challenge result is stale because the validator model has changed." in result.reasons
+
+
+def test_verify_submission_result_detects_public_pool_growth_in_random_mode(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    pack_root = write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    write_eval_task(pack_root / "task-b")
+    artifact_root = pack_root / "agents" / "contributor"
+    manifest = FrontierManifest(
+        schema_version=FRONTIER_SCHEMA_VERSION,
+        repo_ref="/tmp/repo",
+        eval_pack=str(pack_root),
+        updated_at="2026-06-29T00:00:00+00:00",
+        modes={
+            "contributor": FrontierModeConfig(
+                baseline_artifact=str((artifact_root / "baseline").resolve()),
+                frontier_artifact=str((artifact_root / "frontier").resolve()),
+                primary_tasks=[],
+                primary_task_count=1,
+                primary_selection=PRIMARY_SELECTION_RANDOM_LIVE,
+                holdout_tasks=[],
+                evaluator_version="2026-06-29.v1",
+                baseline_artifact_hash=sha256_directory(
+                    artifact_root / "baseline",
+                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+                ),
+                frontier_artifact_hash=sha256_directory(
+                    artifact_root / "frontier",
+                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+                ),
+                primary_pool_fingerprint=pool_fingerprint([pack_root / "task-a"]),
+                holdout_pool_fingerprint=None,
+                frontier_updated_at="2026-06-29T00:00:00+00:00",
+                frontier_source="seed",
+            )
+        },
+    )
+    write_frontier_manifest(str(pack_root), manifest)
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-random",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(VALID_AGENT, encoding="utf-8")
+    summary_payload = challenge_summary_payload(
+        pack_root=pack_root,
+        submission_root=submission_root,
+        frontier_artifact_hash=sha256_directory(
+            pack_root / "agents" / "contributor" / "frontier",
+            include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+        ),
+        candidate_artifact_hash=hash_submission_bundle(submission_root),
+    )
+    summary_payload["primary_pool_fingerprint"] = pool_fingerprint([pack_root / "task-a"])
+    summary_path = tmp_path / "challenge_summary.json"
+    summary_path.write_text(json.dumps(summary_payload) + "\n", encoding="utf-8")
+
+    result = verify_submission_result(str(submission_root), str(summary_path))
+
+    assert not result.benchmark_is_current
+    assert "Challenge result is stale because the benchmark lane has changed." in result.reasons
 
 
 def test_decide_submission_action_returns_merge_for_verified_winner(

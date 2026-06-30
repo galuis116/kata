@@ -1,13 +1,13 @@
 # Submission Workflow
 
-Kata now accepts challenger agents through PR submissions.
+Kata accepts miner agents through PR submissions in the public `kata` repo.
 
-The benchmark lane is still repo-specific, but the miner artifact is no longer
-just a text-only artifact. The required entrypoint is `agent.py`.
+Miners only edit `submissions/`. They do not edit `kings/`, benchmark tasks, or
+validator configuration.
 
 ## Canonical Layout
 
-Each miner PR should add exactly one submission directory:
+Each miner PR should add or update exactly one submission directory:
 
 ```text
 submissions/
@@ -22,7 +22,7 @@ submissions/
 
 Current scope:
 
-- validator-owned Python agent bundles
+- Python agent bundles
 - one submission directory per PR
 - one repo-pack lane per submission
 
@@ -30,7 +30,7 @@ Current scope:
 
 ### `agent.py`
 
-This is the challenger agent entrypoint.
+This is the miner entrypoint.
 
 It must define:
 
@@ -47,15 +47,15 @@ The validator owns:
 - timeouts
 - benchmark tasks
 
-Current default validator model:
+Current validator model:
 
 - `Qwen3-32B`
 
-So miners compete on agent behavior, not on model routing or secret management.
+So miners compete on agent behavior, not on private provider access.
 
 ### `agent_manifest.json`
 
-This defines the validator-facing bundle contract.
+This describes the bundle contract.
 
 Current requirements:
 
@@ -73,9 +73,9 @@ Current validator rule:
 
 ### `submission.json`
 
-This identifies the competition lane and submission metadata.
+This identifies the target competition lane.
 
-Current schema:
+Example:
 
 ```json
 {
@@ -99,6 +99,7 @@ Recommended identity convention:
 
 A competition PR is valid only if:
 
+- it targets the default competition branch
 - it edits one submission directory
 - it changes at least one agent bundle file
 - it does not edit files outside that submission directory
@@ -106,26 +107,21 @@ A competition PR is valid only if:
 - `agent.py` defines `solve(...)`
 - `agent_manifest.json` exists and matches the validator contract
 - it targets a repo-pack that is active in the benchmark registry
-- it targets an existing benchmark repo pack
+- it targets an existing benchmark repo-pack
 - the target pack already has a frontier manifest
 - the target mode is configured in that frontier manifest
 
-These rules are enforced with:
+Current anti-cheat rules also reject:
 
-```bash
-uv run kata submission validate --path <submission-dir>
-```
-
-Current validator anti-cheat rules also reject:
-
-- challenger bundles that duplicate the current frontier or baseline
+- challenger bundles that duplicate the current king/frontier bundle
 - invalid Python syntax in `agent.py` or helper modules
 - symlinks inside the submission bundle
 - bundles above the current file-count or size limits
 - direct references to validator/provider secret env vars
 - obvious hardcoded secret-like tokens
 
-Before checking out the PR branch, CI can inspect the diff only:
+Before checking out untrusted PR content, the bot can inspect only the changed
+paths:
 
 ```bash
 uv run kata submission inspect-pr \
@@ -133,70 +129,80 @@ uv run kata submission inspect-pr \
   --changed-path-file /path/to/changed-paths.txt
 ```
 
+Validate a checked-out submission bundle:
+
+```bash
+uv run kata submission validate \
+  --path submissions/<repo-pack>/<mode>/<submission-id>
+```
+
 ## Evaluation Flow
 
-After validation, Kata can evaluate the challenger against the current
-benchmark lane:
+After validation, Kata evaluates the candidate against the current king.
 
 ```bash
 uv run kata submission evaluate \
-  --path <submission-dir> \
+  --path submissions/<repo-pack>/<mode>/<submission-id> \
   --agent-command "$PWD/scripts/run_python_agent_eval.sh"
 ```
 
-The current evaluator is fully artifact-aware:
+For the current live design:
 
-- challenger submissions use agent bundles
-- baseline lane state uses seeded agent artifacts
-- frontier lane state uses seeded or promoted agent artifacts
+- `10` public tasks are selected randomly from the live public pool
+- `10` private tasks come from the current live holdout pool
+- each solved task is worth `1` point
+
+Promotion gate:
+
+- public pool:
+  - candidate must score at least `king + 2`
+- private pool:
+  - candidate must score at least `king`
 
 ## Stale Frontier Protection
 
-Submission results are only safe to merge if the frontier has not changed since
-the evaluation completed.
+Results are only safe to merge if the lane has not changed since evaluation.
 
 Kata checks that with:
 
 ```bash
 uv run kata submission verify \
-  --path <submission-dir> \
-  --challenge-run <challenge-summary.json>
+  --path submissions/<repo-pack>/<mode>/<submission-id> \
+  --challenge-run runs/<challenge-run>/challenge_summary.json
 ```
 
-The verification currently checks:
+Verification checks that:
 
-- challenger artifact hash still matches the submission
-- frontier hash is still current
-- evaluator version is still current
-- validator model is still current
-- primary and holdout pool fingerprints are still current
-- the challenge itself was promotion-ready
+- the submission hash still matches the evaluated candidate
+- the king/frontier hash is still current
+- the evaluator version is still current
+- the validator model is still current
+- the public and private pool fingerprints are still current
+- the challenge itself is promotion-ready
 
-If any of those drift, the submission result is stale and should be rerun.
+If any of those drift, the result is stale and should be rerun.
 
 ## PR Decision Actions
 
-After verification, Kata can collapse the result into a PR action:
+After verification, Kata reduces the result to one PR action:
 
 ```bash
 uv run kata submission decide \
-  --path <submission-dir> \
-  --challenge-run <challenge-summary.json>
+  --path submissions/<repo-pack>/<mode>/<submission-id> \
+  --challenge-run runs/<challenge-run>/challenge_summary.json
 ```
 
-Current decision actions are:
+Possible actions are:
 
 - `close-invalid`
 - `close-losing`
 - `rerun-stale`
 - `merge`
 
-These actions are intended to drive a separate GitHub bot cleanly.
-
 ## Promotion
 
 If the decision is `merge`, the bot or maintainer can promote the verified
-submission into the frontier:
+submission:
 
 ```bash
 uv run kata frontier promote \
@@ -204,4 +210,12 @@ uv run kata frontier promote \
   --submission-path <submission-dir>
 ```
 
-This re-checks freshness before mutating the frontier artifact.
+The production bot does more than promotion:
+
+1. merge the winning PR
+2. update the king under `kings/<repo-pack>/<mode>/`
+3. update frontier manifests
+4. clear the merged `submissions/.../<submission-id>/` directory from `main`
+
+So `submissions/` stays empty between active miner PRs, while `kings/` remains
+the public source of truth for the current winner.

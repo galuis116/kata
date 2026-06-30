@@ -21,6 +21,8 @@ from kata.agent_bundle import (
 from kata.benchmarks import ensure_active_repo_pack, resolve_eval_pack_path
 from kata.challenge import (
     ChallengeSummary,
+    current_holdout_pool_fingerprint,
+    current_primary_pool_fingerprint,
     load_challenge_summary,
     run_frontier_challenge,
 )
@@ -28,11 +30,10 @@ from kata.config import resolve_validator_model
 from kata.frontier import (
     load_frontier_manifest,
     promote_frontier_artifact,
-    resolve_baseline_artifact_hash,
     resolve_frontier_artifact_hash,
 )
 from kata.provenance import sha256_directory
-from kata.public_artifacts import publish_public_king
+from kata.public_artifacts import publish_public_king, resolve_artifact_path
 
 SUBMISSIONS_DIRNAME = "submissions"
 SUBMISSION_SCHEMA_VERSION = 2
@@ -463,6 +464,14 @@ def verify_submission_result(
     candidate_hash = hash_submission_bundle(Path(validation.submission_path))
     current_frontier_hash = resolve_frontier_artifact_hash(mode_config)
     current_validator_model = resolve_validator_model()
+    current_primary_fingerprint = current_primary_pool_fingerprint(
+        validation.metadata.repo_pack,
+        mode_config,
+    )
+    current_holdout_fingerprint = current_holdout_pool_fingerprint(
+        validation.metadata.repo_pack,
+        mode_config,
+    )
 
     expected_manifest_path = (
         resolve_eval_pack_path(validation.metadata.repo_pack) / "frontier.json"
@@ -476,8 +485,8 @@ def verify_submission_result(
     benchmark_is_current = (
         summary.evaluator_version == (mode_config.evaluator_version or summary.evaluator_version)
         and summary.validator_model == current_validator_model
-        and summary.primary_pool_fingerprint == mode_config.primary_pool_fingerprint
-        and summary.holdout_pool_fingerprint == mode_config.holdout_pool_fingerprint
+        and summary.primary_pool_fingerprint == current_primary_fingerprint
+        and summary.holdout_pool_fingerprint == current_holdout_fingerprint
     )
 
     reasons: list[str] = []
@@ -1220,18 +1229,15 @@ def validate_submission_not_copycat(
     reasons: list[str] = []
     candidate_hash = hash_submission_bundle(submission_root)
     frontier_hash = resolve_frontier_artifact_hash(mode_config)
-    baseline_hash = resolve_baseline_artifact_hash(mode_config)
     if candidate_hash == frontier_hash:
         reasons.append("Submission bundle is an exact copy of the current frontier artifact.")
-    if candidate_hash == baseline_hash:
-        reasons.append("Submission bundle is an exact copy of the current baseline artifact.")
 
     candidate_agent = bundle_files.get(AGENT_ENTRY_FILENAME)
     if candidate_agent is None:
         return reasons
 
     frontier_agent_path = (
-        Path(mode_config.frontier_artifact).expanduser().resolve() / AGENT_ENTRY_FILENAME
+        resolve_artifact_path(mode_config.frontier_artifact) / AGENT_ENTRY_FILENAME
     )
     if frontier_agent_path.exists() and python_sources_equivalent(
         candidate_agent,
@@ -1239,17 +1245,6 @@ def validate_submission_not_copycat(
     ):
         reasons.append(
             "Submission agent duplicates the current frontier agent implementation."
-        )
-
-    baseline_agent_path = (
-        Path(mode_config.baseline_artifact).expanduser().resolve() / AGENT_ENTRY_FILENAME
-    )
-    if baseline_agent_path.exists() and python_sources_equivalent(
-        candidate_agent,
-        baseline_agent_path.read_text(encoding="utf-8"),
-    ):
-        reasons.append(
-            "Submission agent duplicates the current baseline agent implementation."
         )
     return reasons
 

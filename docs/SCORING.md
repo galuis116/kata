@@ -85,16 +85,14 @@ Kata scoring follows these principles:
 
 ## Artifact Roles
 
-Kata evaluates three artifact roles inside one challenge:
+Kata evaluates two artifact roles inside one challenge:
 
-- `baseline`: fixed generic control artifact
 - `frontier`: current best verified artifact
 - `candidate`: challenger artifact trying to replace the frontier
 
 The purpose of the score is:
 
 - compare `candidate` vs `frontier`
-- quantify `candidate` vs `baseline`
 - support promotion decisions using primary and holdout pools
 
 ---
@@ -371,7 +369,6 @@ Every challenge summary should report at least:
 - `tasks_solved`
 - `invalid_tasks`
 - `score_delta_vs_frontier`
-- `score_delta_vs_baseline`
 - `promotion_ready`
 
 Helpful secondary metrics:

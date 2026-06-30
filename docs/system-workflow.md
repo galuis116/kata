@@ -1,101 +1,116 @@
 # Kata Workflow
 
-This system uses three repos.
+Kata is a PR-based coding-agent competition system.
 
-- `Kata`
-  - receives miner submission PRs
-  - validates challenger agents
-  - runs benchmark evaluation
-  - decides whether a PR should close, rerun, or merge
+The live system is split across repos:
+
+- `kata`
+  - public miner-facing repo
+  - receives miner PRs under `submissions/`
+  - stores the public current king under `kings/`
 - `kata-benchmarks`
-  - stores benchmark packs for each target repo
-  - stores frontier state for each repo lane
-  - stores the current benchmark source of truth
+  - public benchmark registry
+  - stores public benchmark tasks
+  - stores `frontier.json`, which describes the live public pool policy
+- `kata-benchmarks-private`
+  - private benchmark registry
+  - stores hidden holdout tasks
+  - stores `frontier.private.json`, which lists the current live private pool
 - `kata-bot`
-  - listens to PR events
-  - calls Kata commands
-  - comments on PRs
-  - closes, reruns, or merges based on Kata results
+  - always-on validator service
+  - listens to GitHub webhook events
+  - comments, closes, merges, and promotes winners
 
-So the competition happens through PRs in `Kata`, the benchmark state
-lives in `kata-benchmarks`, and GitHub automation lives in `kata-bot`.
+## Current Live Design
 
-Current MVP note:
+For the current production design, one duel uses `20` tasks total:
 
-- SN74 may list many repos upstream
-- Kata currently activates one repo-pack first:
-  `e35ventura__taopedia-articles`
-- more repo-packs can be added later by extending the benchmark registry
+- `10` public tasks
+  - selected randomly from the current live public task set
+- `10` private tasks
+  - taken from the current live private holdout pool
 
-This is the workflow in order.
+Scoring is task-count based:
 
-1. A maintainer selects a target repo.
+- each solved task gives `1` point
+- perfect score is `20`
 
-2. A benchmark pack is prepared for that repo in `kata-benchmarks`.
-   That pack contains pinned tasks and checks.
+Current promotion rule:
 
-3. Kata initializes the lane for that repo and mode.
-   Today this seeds the first baseline/frontier lane artifacts from
-   source-grounded repo analysis, and challenger submissions use the
-   `agent.py` contract.
+- primary/public pool:
+  - candidate must score at least `king + 2`
+- private/holdout pool:
+  - candidate must score at least `king`
 
-4. A miner opens a PR to `Kata` with one challenger agent submission.
+So the candidate must both improve on the public side and avoid regressing on
+the hidden side.
 
-5. The bot asks Kata to check the PR shape first.
-   The PR should only touch one submission directory and only allowed
-   submission files.
+## End-To-End PR Flow
 
-6. If the PR is invalid, the bot closes it.
+1. A maintainer prepares benchmark tasks.
+   Public tasks go in `kata-benchmarks`.
+   Hidden holdout tasks go in `kata-benchmarks-private`.
 
-7. If the PR is valid, the bot asks Kata to evaluate the lane on the
-   same benchmark tasks:
-   - baseline artifact
-   - frontier artifact
-   - challenger agent
+2. A maintainer initializes the first king/frontier for the repo-pack and mode.
+   The public current king code is stored in `kata/kings/<repo-pack>/<mode>/`.
 
-8. The evaluation uses the same repo snapshot, same tasks, same agent command,
-   and same checks.
-   The challenger artifact is the variable.
+3. A miner opens a PR against the default branch of `kata`.
+   The PR should touch exactly one submission directory:
 
-9. The challenger only wins if it beats the current frontier by the required
-   promotion margin.
+   `submissions/<repo-pack>/<mode>/<submission-id>/`
 
-10. If holdout tasks are configured, the challenger must also hold up there.
+4. `kata-bot` receives the GitHub webhook event and writes a durable queue job.
 
-11. Before promotion, the bot asks Kata to check freshness.
-    If the frontier changed after the evaluation, the old result is stale.
+5. The resident validator worker drains the queue continuously.
 
-12. If the result is stale, it must be rerun against the current frontier.
+6. The bot checks the PR shape before trusting the PR contents.
+   It rejects PRs that:
+   - target the wrong base branch
+   - touch files outside one submission directory
+   - point to an inactive or missing repo-pack
 
-13. If the challenger is valid, fresh, and stronger than the frontier, the bot
-    promotes it and it becomes the new frontier.
+7. If the PR shape is valid, Kata validates the submission bundle itself.
+   That includes:
+   - `agent.py`
+   - `agent_manifest.json`
+   - optional `helpers/*.py`
+   - `submission.json`
 
-14. After that, the next miner must beat this new frontier.
+8. Kata evaluates the candidate against the current king.
+   Both agents run on the same repo snapshot, same task pools, same runtime
+   policy, and same checks.
 
-15. The final decision for a PR is reduced by Kata to one of these actions:
-    - `close-invalid`
-    - `close-losing`
-    - `rerun-stale`
-    - `merge`
+9. If the candidate loses or has invalid runs, the bot comments with the reason
+   and closes the PR.
 
-So the system is a winner-take-all loop for each repo:
+10. If the candidate wins, Kata verifies that the result is still fresh.
+    If the king or pool state changed during the run, the result is stale and
+    must be rerun.
 
-1. prepare benchmark
-2. initialize frontier
-3. accept challenger PR
-4. validate it
-5. evaluate it
-6. check freshness
-7. replace frontier only if the challenger really wins
+11. If the result is still fresh and merge-safe, the bot merges the PR.
 
-Current boundary:
+12. After merge, the bot promotes the winning submission into
+    `kata/kings/<repo-pack>/<mode>/`, updates the frontier manifests, and then
+    removes the merged `submissions/.../<submission-id>/` directory from
+    `main`.
 
-- challenger agent submission
-- validation
-- evaluation
-- scoring
-- decision output
+That last step is important: `submissions/` is a temporary intake area, not the
+long-term home of the king.
 
-Next step:
+## Task Pool Rotation
 
-- keep hardening anti-cheat rules and finish the GitHub bot automation layer
+The validator runs continuously. It does not create new task pools by itself.
+
+Maintainers rotate pools manually, usually with `kata-benchkit`:
+
+1. reveal the old private pool into the public benchmark repo
+2. create a fresh hidden private pool
+3. update the live pool manifests
+
+Private tasks should move to the public side only after both are true:
+
+- a newer private pool has already taken over
+- no in-flight or future duel can still reference the old private pool
+
+So a private task does not become public after one duel. It becomes public only
+after it is fully retired from live competition use.

@@ -29,6 +29,7 @@ packages = ["kata"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["kings", "runs", "submissions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

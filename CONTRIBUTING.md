@@ -41,14 +41,15 @@ Canonical benchmark packs should live in a benchmark registry repo that contains
 
 ## Competition model
 
-Kata uses three lane roles:
+Kata uses two live competition roles:
 
-- `baseline`: fixed generic control artifact
 - `frontier`: current best verified artifact for a repo and mode
 - `challenger`: new candidate agent trying to replace the frontier
 
-A challenger should only be promoted when it beats the frontier on the primary
-pool and, when configured, on the holdout pool.
+For the current live design, a challenger should only be promoted when it:
+
+- beats the frontier by the required public-pool margin
+- does not regress on the private holdout pool
 
 Benchmark changes should also preserve clear provenance:
 
@@ -93,7 +94,7 @@ Good contributions:
 
 - stronger eval-pack checks
 - better task coverage
-- clearer baseline/frontier/challenger workflow
+- clearer king/frontier/challenger workflow
 - safer reporting and anti-gaming logic
 - better contributor and reviewer seed-agent initialization
 

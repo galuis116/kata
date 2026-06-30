@@ -1,23 +1,26 @@
 from __future__ import annotations
 
 import json
+import secrets
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files
-from kata.benchmarks import resolve_eval_pack_path
+from kata.benchmarks import resolve_eval_pack_path, resolve_private_eval_pack_path
 from kata.config import resolve_validator_model
+from kata.eval_pack import discover_live_eval_pack_tasks
 from kata.eval_runner import ArtifactVariant, EvalRunSummary, run_artifact_variants
 from kata.frontier import (
     DEFAULT_PROMOTION_MARGIN_POINTS,
+    PRIMARY_SELECTION_RANDOM_LIVE,
     FrontierManifest,
     FrontierModeConfig,
     load_frontier_manifest,
-    resolve_baseline_artifact_hash,
     resolve_frontier_artifact_hash,
 )
-from kata.provenance import EVALUATOR_VERSION, short_hash
+from kata.provenance import EVALUATOR_VERSION, pool_fingerprint, short_hash
+from kata.public_artifacts import resolve_artifact_path
 
 
 @dataclass(frozen=True)
@@ -40,10 +43,8 @@ class ChallengeSummary:
     mode: str
     evaluator_version: str
     validator_model: str
-    baseline_artifact: str
     frontier_artifact: str
     candidate_artifact: str
-    baseline_artifact_hash: str
     frontier_artifact_hash: str
     candidate_artifact_hash: str
     primary_pool_fingerprint: str | None
@@ -77,15 +78,18 @@ def run_frontier_challenge(
     challenge_root = output_base / challenge_run_id
     challenge_root.mkdir(parents=True, exist_ok=False)
 
-    baseline_files = load_bundle_files(Path(mode_config.baseline_artifact).expanduser().resolve())
-    frontier_files = load_bundle_files(Path(mode_config.frontier_artifact).expanduser().resolve())
+    frontier_files = load_bundle_files(resolve_artifact_path(mode_config.frontier_artifact))
     candidate_files = load_bundle_files(candidate_path)
     evaluator_version = mode_config.evaluator_version or EVALUATOR_VERSION
     validator_model = resolve_validator_model()
-    baseline_hash = resolve_baseline_artifact_hash(mode_config)
     frontier_hash = resolve_frontier_artifact_hash(mode_config)
     candidate_hash = sha256_bundle_dict(candidate_files)
     promotion_margin_points = mode_config.promotion_margin_points
+    selected_primary_tasks = resolve_primary_task_ids(eval_pack_path, mode_config)
+    current_primary_fingerprint = current_primary_pool_fingerprint(
+        eval_pack_path,
+        mode_config,
+    )
 
     primary_eval = run_artifact_variants(
         repo_ref=manifest.repo_ref,
@@ -93,11 +97,6 @@ def run_frontier_challenge(
         mode=mode,
         agent_command=agent_command,
         artifact_variants=[
-            ArtifactVariant(
-                name="baseline",
-                files=baseline_files,
-                entrypoint=AGENT_ENTRY_FILENAME,
-            ),
             ArtifactVariant(
                 name="frontier",
                 files=frontier_files,
@@ -109,38 +108,50 @@ def run_frontier_challenge(
                 entrypoint=AGENT_ENTRY_FILENAME,
             ),
         ],
-        task_names=mode_config.primary_tasks,
+        task_names=selected_primary_tasks,
         output_root=str(challenge_root / "primary"),
         run_label=f"{eval_pack_root.name}-{mode}-primary",
         run_kind="challenge-primary",
         metadata={
             "evaluator_version": evaluator_version,
             "pool_name": "primary",
-            "pool_fingerprint": mode_config.primary_pool_fingerprint or "",
+            "pool_fingerprint": current_primary_fingerprint or "",
             "validator_model": validator_model,
-            "baseline_artifact_hash": baseline_hash,
             "frontier_artifact_hash": frontier_hash,
             "candidate_artifact_hash": candidate_hash,
         },
         agent_timeout_seconds=agent_timeout_seconds,
         checks_timeout_seconds=checks_timeout_seconds,
     )
-    primary_summary = summarize_pool(primary_eval, mode_config.primary_tasks)
+    primary_summary = summarize_pool(primary_eval, selected_primary_tasks)
 
     holdout_summary: ChallengePoolSummary | None = None
     promotion_ready = False
+    if mode_config.holdout_task_count > 0 and not mode_config.holdout_tasks:
+        raise ValueError(
+            "Private holdout tasks are configured for this lane, but they are not available "
+            "in the current validator environment. Set KATA_PRIVATE_BENCHMARKS_ROOT."
+        )
     if primary_summary.candidate_beats_frontier and mode_config.holdout_tasks:
+        current_holdout_fingerprint = current_holdout_pool_fingerprint(
+            eval_pack_path,
+            mode_config,
+        )
+        holdout_eval_pack_path = (
+            str(
+                resolve_private_eval_pack_path(
+                    mode_config.holdout_eval_pack or eval_pack_root.name
+                )
+            )
+            if mode_config.holdout_is_private
+            else (mode_config.holdout_eval_pack or eval_pack_path)
+        )
         holdout_eval = run_artifact_variants(
             repo_ref=manifest.repo_ref,
-            eval_pack_path=eval_pack_path,
+            eval_pack_path=holdout_eval_pack_path,
             mode=mode,
             agent_command=agent_command,
             artifact_variants=[
-                ArtifactVariant(
-                    name="baseline",
-                    files=baseline_files,
-                    entrypoint=AGENT_ENTRY_FILENAME,
-                ),
                 ArtifactVariant(
                     name="frontier",
                     files=frontier_files,
@@ -159,9 +170,8 @@ def run_frontier_challenge(
             metadata={
                 "evaluator_version": evaluator_version,
                 "pool_name": "holdout",
-                "pool_fingerprint": mode_config.holdout_pool_fingerprint or "",
+                "pool_fingerprint": current_holdout_fingerprint or "",
                 "validator_model": validator_model,
-                "baseline_artifact_hash": baseline_hash,
                 "frontier_artifact_hash": frontier_hash,
                 "candidate_artifact_hash": candidate_hash,
             },
@@ -169,6 +179,11 @@ def run_frontier_challenge(
             checks_timeout_seconds=checks_timeout_seconds,
         )
         holdout_summary = summarize_pool(holdout_eval, mode_config.holdout_tasks)
+    else:
+        current_holdout_fingerprint = current_holdout_pool_fingerprint(
+            eval_pack_path,
+            mode_config,
+        )
     promotion_ready, reason = evaluate_promotion(
         primary_summary,
         holdout_summary,
@@ -181,14 +196,12 @@ def run_frontier_challenge(
         mode=mode,
         evaluator_version=evaluator_version,
         validator_model=validator_model,
-        baseline_artifact=str(Path(mode_config.baseline_artifact).resolve()),
-        frontier_artifact=str(Path(mode_config.frontier_artifact).resolve()),
+        frontier_artifact=str(resolve_artifact_path(mode_config.frontier_artifact)),
         candidate_artifact=str(candidate_path),
-        baseline_artifact_hash=baseline_hash,
         frontier_artifact_hash=frontier_hash,
         candidate_artifact_hash=candidate_hash,
-        primary_pool_fingerprint=mode_config.primary_pool_fingerprint,
-        holdout_pool_fingerprint=mode_config.holdout_pool_fingerprint,
+        primary_pool_fingerprint=current_primary_fingerprint,
+        holdout_pool_fingerprint=current_holdout_fingerprint,
         promotion_margin_points=promotion_margin_points,
         created_at=datetime.now(UTC).isoformat(),
         primary=primary_summary,
@@ -208,7 +221,6 @@ def render_challenge_summary(summary: ChallengeSummary) -> str:
     lines.append(f"Candidate artifact: `{summary.candidate_artifact}`")
     lines.append(f"Evaluator version: {summary.evaluator_version}")
     lines.append(f"Validator model: {summary.validator_model}")
-    lines.append(f"Baseline artifact hash: {short_hash(summary.baseline_artifact_hash)}")
     lines.append(f"Frontier artifact hash: {short_hash(summary.frontier_artifact_hash)}")
     lines.append(f"Candidate artifact hash: {short_hash(summary.candidate_artifact_hash)}")
     if summary.primary_pool_fingerprint:
@@ -236,9 +248,6 @@ def render_challenge_summary(summary: ChallengeSummary) -> str:
 def load_challenge_summary(path: str) -> ChallengeSummary:
     payload = json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
     holdout_payload = payload.get("holdout")
-    baseline_artifact = payload.get("baseline_artifact")
-    if baseline_artifact is None:
-        baseline_artifact = payload["baseline_prompt"]
     frontier_artifact = payload.get("frontier_artifact")
     if frontier_artifact is None:
         frontier_artifact = payload["frontier_prompt"]
@@ -252,13 +261,8 @@ def load_challenge_summary(path: str) -> ChallengeSummary:
         mode=payload["mode"],
         evaluator_version=payload.get("evaluator_version", EVALUATOR_VERSION),
         validator_model=payload.get("validator_model", resolve_validator_model()),
-        baseline_artifact=baseline_artifact,
         frontier_artifact=frontier_artifact,
         candidate_artifact=candidate_artifact,
-        baseline_artifact_hash=payload.get(
-            "baseline_artifact_hash",
-            payload.get("baseline_prompt_hash", ""),
-        ),
         frontier_artifact_hash=payload.get(
             "frontier_artifact_hash",
             payload.get("frontier_prompt_hash", ""),
@@ -396,13 +400,65 @@ def resolve_mode(manifest: FrontierManifest, mode: str) -> FrontierModeConfig:
     return mode_config
 
 
+def resolve_primary_task_ids(
+    eval_pack_path: str,
+    mode_config: FrontierModeConfig,
+) -> list[str]:
+    if mode_config.primary_selection != PRIMARY_SELECTION_RANDOM_LIVE:
+        return list(mode_config.primary_tasks)
+    validations = discover_live_eval_pack_tasks(eval_pack_path)
+    available = sorted(result.root.name for result in validations)
+    requested_count = mode_config.primary_task_count or len(available)
+    if requested_count <= 0:
+        raise ValueError("Random public primary pool requires at least one task.")
+    if len(available) < requested_count:
+        raise ValueError(
+            "Random public primary pool is underfilled. "
+            f"Requested {requested_count} live tasks but only {len(available)} are available."
+        )
+    return sorted(secrets.SystemRandom().sample(available, requested_count))
+
+
+def current_primary_pool_fingerprint(
+    eval_pack_path: str,
+    mode_config: FrontierModeConfig,
+) -> str | None:
+    if mode_config.primary_selection == PRIMARY_SELECTION_RANDOM_LIVE:
+        validations = discover_live_eval_pack_tasks(eval_pack_path)
+        return pool_fingerprint([result.root for result in validations]) if validations else None
+    if not mode_config.primary_tasks:
+        return None
+    eval_pack_root = resolve_eval_pack_path(eval_pack_path)
+    return pool_fingerprint([eval_pack_root / task_id for task_id in mode_config.primary_tasks])
+
+
+def current_holdout_pool_fingerprint(
+    eval_pack_path: str,
+    mode_config: FrontierModeConfig,
+) -> str | None:
+    if not mode_config.holdout_tasks:
+        return None
+    holdout_pack_ref = mode_config.holdout_eval_pack or resolve_eval_pack_path(
+        eval_pack_path
+    ).name
+    holdout_eval_pack_root = (
+        resolve_private_eval_pack_path(holdout_pack_ref)
+        if mode_config.holdout_is_private
+        else resolve_eval_pack_path(mode_config.holdout_eval_pack or eval_pack_path)
+    )
+    holdout_task_roots = [
+        holdout_eval_pack_root / task_id for task_id in mode_config.holdout_tasks
+    ]
+    return pool_fingerprint(holdout_task_roots)
+
+
 def render_pool(pool: ChallengePoolSummary) -> list[str]:
     lines = [
         f"- Tasks: {', '.join(pool.task_ids)}",
         f"- Eval run: `{pool.eval_run_summary}`",
         f"- Total task weight: {pool.total_task_weight:g}",
     ]
-    for variant_name in ("baseline", "frontier", "candidate"):
+    for variant_name in ("frontier", "candidate"):
         lines.append(f"- {variant_name} solved: {pool.variant_successes.get(variant_name, 0)}")
         lines.append(
             f"- {variant_name} invalid tasks: {pool.variant_invalid_tasks.get(variant_name, 0)}"
