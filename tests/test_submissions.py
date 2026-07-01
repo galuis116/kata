@@ -1042,6 +1042,18 @@ def test_decide_submission_action_returns_close_for_loser(
     )
     payload["promotion_ready"] = False
     payload["promotion_reason"] = "candidate did not beat the current frontier on the primary score"
+    payload["primary"]["variant_successes"] = {
+        "baseline": 0,
+        "frontier": 1,
+        "candidate": 0,
+    }
+    payload["primary"]["variant_scores"] = {
+        "baseline": 0.0,
+        "frontier": 100.0,
+        "candidate": 0.0,
+    }
+    payload["primary"]["candidate_beats_frontier"] = False
+    payload["primary"]["candidate_score_delta"] = -100.0
     summary_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
     result = decide_submission_action(str(submission_root), str(summary_path))

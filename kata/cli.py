@@ -16,6 +16,7 @@ from kata.eval_pack import (
     render_validation_result,
 )
 from kata.frontier import (
+    DEFAULT_HOLDOUT_PROMOTION_MARGIN_POINTS,
     DEFAULT_PROMOTION_MARGIN_POINTS,
     init_frontier,
     load_frontier_manifest,
@@ -92,6 +93,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Optional score margin the challenger must clear to replace the frontier.",
+    )
+    frontier_init.add_argument(
+        "--holdout-promotion-margin-points",
+        type=float,
+        default=None,
+        help="Optional hidden holdout score margin the challenger must clear.",
     )
     frontier_init.set_defaults(handler=handle_frontier_init)
 
@@ -428,6 +435,11 @@ def handle_frontier_init(args: argparse.Namespace) -> int:
             args.promotion_margin_points
             if args.promotion_margin_points is not None
             else DEFAULT_PROMOTION_MARGIN_POINTS
+        ),
+        holdout_promotion_margin_points=(
+            args.holdout_promotion_margin_points
+            if args.holdout_promotion_margin_points is not None
+            else DEFAULT_HOLDOUT_PROMOTION_MARGIN_POINTS
         ),
     )
     print(render_frontier_manifest(manifest, args.mode))

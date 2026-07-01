@@ -23,6 +23,7 @@ from kata.challenge import (
     ChallengeSummary,
     current_holdout_pool_fingerprint,
     current_primary_pool_fingerprint,
+    evaluate_promotion,
     load_challenge_summary,
     run_frontier_challenge,
 )
@@ -488,6 +489,12 @@ def verify_submission_result(
         and summary.primary_pool_fingerprint == current_primary_fingerprint
         and summary.holdout_pool_fingerprint == current_holdout_fingerprint
     )
+    current_promotion_ready, current_promotion_reason = evaluate_promotion(
+        summary.primary,
+        summary.holdout,
+        promotion_margin_points=mode_config.promotion_margin_points,
+        holdout_promotion_margin_points=mode_config.holdout_promotion_margin_points,
+    )
 
     reasons: list[str] = []
     if not submission_matches:
@@ -498,8 +505,8 @@ def verify_submission_result(
         reasons.append("Challenge result is stale because the validator model has changed.")
     elif not benchmark_is_current:
         reasons.append("Challenge result is stale because the benchmark lane has changed.")
-    if not summary.promotion_ready:
-        reasons.append(f"Challenge is not promotion-ready: {summary.promotion_reason}")
+    if not current_promotion_ready:
+        reasons.append(f"Challenge is not promotion-ready: {current_promotion_reason}")
 
     return SubmissionVerificationResult(
         submission_path=validation.submission_path,
@@ -516,11 +523,11 @@ def verify_submission_result(
         submission_matches_challenge=submission_matches,
         frontier_is_current=frontier_is_current,
         benchmark_is_current=benchmark_is_current,
-        promotion_ready=summary.promotion_ready,
+        promotion_ready=current_promotion_ready,
         auto_merge_ready=submission_matches
         and frontier_is_current
         and benchmark_is_current
-        and summary.promotion_ready,
+        and current_promotion_ready,
         reasons=reasons,
     )
 

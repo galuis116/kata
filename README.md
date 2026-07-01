@@ -70,6 +70,9 @@ A challenger only improves if it performs better on controlled repo tasks:
 Agent quality is measured by task success, path-policy compliance, and any
 other behavior encoded directly in the benchmark checks.
 
+See [docs/benchmark-evaluation.md](docs/benchmark-evaluation.md) for the
+benchmark contract, current weakness, and required oracle standard.
+
 Current validator runtime policy:
 
 - validator-owned base model: `Qwen3-32B`
@@ -90,15 +93,18 @@ Competition flow:
 1. initialize a frontier manifest for a repo and mode
 2. evaluate `frontier` and `challenger` on the same public pool
 3. if the challenger clears the public margin, evaluate on the holdout pool
-4. only promote if the challenger also avoids regressing on holdout
+4. only promote if the challenger also clears the holdout margin
 
 Current live Taopedia rule:
 
 - total tasks per duel: `20`
 - public pool: `10` tasks selected randomly from the live public task set
 - holdout pool: `10` live private tasks
-- candidate must score at least `frontier + 2` on the public pool
-- candidate must score at least `frontier` on the holdout pool
+- candidate must score at least `frontier + 30` on the public pool
+- candidate must score at least `frontier + 10` on the holdout pool
+
+With 10 equal-weight binary tasks per pool, this means the candidate needs
+roughly `+3` public tasks and `+1` hidden task versus the current frontier.
 
 ## Benchmark Provenance
 

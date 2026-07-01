@@ -37,7 +37,8 @@ from kata.seed_agent import render_seed_agent
 FRONTIER_SCHEMA_VERSION = 4
 FRONTIER_FILENAME = "frontier.json"
 PRIVATE_FRONTIER_FILENAME = "frontier.private.json"
-DEFAULT_PROMOTION_MARGIN_POINTS = 2.0
+DEFAULT_PROMOTION_MARGIN_POINTS = 30.0
+DEFAULT_HOLDOUT_PROMOTION_MARGIN_POINTS = 10.0
 DEFAULT_RANDOM_PRIMARY_TASK_COUNT = 10
 PRIMARY_SELECTION_FIXED = "fixed"
 PRIMARY_SELECTION_RANDOM_LIVE = "random_live"
@@ -55,6 +56,7 @@ class FrontierModeConfig:
     holdout_eval_pack: str | None = None
     holdout_is_private: bool = False
     promotion_margin_points: float = DEFAULT_PROMOTION_MARGIN_POINTS
+    holdout_promotion_margin_points: float = DEFAULT_HOLDOUT_PROMOTION_MARGIN_POINTS
     evaluator_version: str | None = None
     baseline_artifact_hash: str | None = None
     frontier_artifact_hash: str | None = None
@@ -106,6 +108,7 @@ def load_frontier_manifest(eval_pack_path: str) -> FrontierManifest:
             holdout_eval_pack=private_mode.holdout_eval_pack or public_mode.holdout_eval_pack,
             holdout_is_private=public_mode.holdout_is_private or private_mode.holdout_is_private,
             promotion_margin_points=public_mode.promotion_margin_points,
+            holdout_promotion_margin_points=public_mode.holdout_promotion_margin_points,
             evaluator_version=public_mode.evaluator_version,
             baseline_artifact_hash=public_mode.baseline_artifact_hash,
             frontier_artifact_hash=public_mode.frontier_artifact_hash,
@@ -179,6 +182,7 @@ def init_frontier(
     primary_tasks: list[str] | None = None,
     holdout_tasks: list[str] | None = None,
     promotion_margin_points: float = DEFAULT_PROMOTION_MARGIN_POINTS,
+    holdout_promotion_margin_points: float = DEFAULT_HOLDOUT_PROMOTION_MARGIN_POINTS,
 ) -> FrontierManifest:
     validations = discover_live_eval_pack_tasks(eval_pack_path)
     invalid = [result.root.name for result in validations if not result.is_valid]
@@ -276,6 +280,7 @@ def init_frontier(
         holdout_eval_pack=eval_pack_root.name if selected_holdout else None,
         holdout_is_private=private_holdout_enabled,
         promotion_margin_points=promotion_margin_points,
+        holdout_promotion_margin_points=holdout_promotion_margin_points,
         evaluator_version=EVALUATOR_VERSION,
         baseline_artifact_hash=None,
         frontier_artifact_hash=sha256_directory(
@@ -345,6 +350,7 @@ def promote_frontier_artifact(
         holdout_eval_pack=mode_config.holdout_eval_pack,
         holdout_is_private=mode_config.holdout_is_private,
         promotion_margin_points=mode_config.promotion_margin_points,
+        holdout_promotion_margin_points=mode_config.holdout_promotion_margin_points,
         evaluator_version=evaluator_version or mode_config.evaluator_version or EVALUATOR_VERSION,
         baseline_artifact_hash=mode_config.baseline_artifact_hash,
         frontier_artifact_hash=frontier_hash,
@@ -409,6 +415,10 @@ def render_frontier_manifest(manifest: FrontierManifest, mode: str | None = None
         if mode_config.evaluator_version:
             lines.append(f"- Evaluator version: {mode_config.evaluator_version}")
         lines.append(f"- Promotion margin: {mode_config.promotion_margin_points:.1f} points")
+        lines.append(
+            "- Holdout margin: "
+            f"{mode_config.holdout_promotion_margin_points:.1f} points"
+        )
         if mode_config.frontier_artifact_hash:
             lines.append(
                 f"- Frontier artifact hash: {short_hash(mode_config.frontier_artifact_hash)}"
@@ -506,6 +516,12 @@ def parse_frontier_mode_config(config: dict[str, object]) -> FrontierModeConfig:
         holdout_is_private=bool(config.get("holdout_is_private", False)),
         promotion_margin_points=float(
             config.get("promotion_margin_points", DEFAULT_PROMOTION_MARGIN_POINTS)
+        ),
+        holdout_promotion_margin_points=float(
+            config.get(
+                "holdout_promotion_margin_points",
+                DEFAULT_HOLDOUT_PROMOTION_MARGIN_POINTS,
+            )
         ),
         evaluator_version=str(config["evaluator_version"])
         if config.get("evaluator_version") is not None

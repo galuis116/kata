@@ -29,6 +29,7 @@ def test_render_frontier_manifest_includes_primary_and_holdout_tasks(tmp_path: P
                 primary_tasks=["task-a", "task-b"],
                 holdout_tasks=["task-c"],
                 promotion_margin_points=4.5,
+                holdout_promotion_margin_points=1.5,
                 evaluator_version="2026-06-29.v1",
                 baseline_artifact_hash="a" * 64,
                 frontier_artifact_hash="b" * 64,
@@ -47,6 +48,7 @@ def test_render_frontier_manifest_includes_primary_and_holdout_tasks(tmp_path: P
     assert "Frontier source: run-123" in rendered
     assert "Evaluator version: 2026-06-29.v1" in rendered
     assert "Promotion margin: 4.5 points" in rendered
+    assert "Holdout margin: 1.5 points" in rendered
     assert "Primary pool fingerprint: cccccccccccc" in rendered
 
 
@@ -57,9 +59,9 @@ def test_promotion_reason_explains_holdout_failure() -> None:
         total_task_weight=1.0,
         variant_successes={"frontier": 0, "candidate": 1, "baseline": 0},
         variant_invalid_tasks={"frontier": 0, "candidate": 0, "baseline": 0},
-        variant_scores={"frontier": 40.0, "candidate": 45.0, "baseline": 0.0},
+        variant_scores={"frontier": 40.0, "candidate": 75.0, "baseline": 0.0},
         candidate_beats_frontier=True,
-        candidate_score_delta=5.0,
+        candidate_score_delta=35.0,
     )
     holdout = ChallengePoolSummary(
         task_ids=["task-b"],
@@ -91,6 +93,7 @@ def test_render_frontier_json_includes_mode_configuration(tmp_path: Path) -> Non
                 primary_tasks=["task-a"],
                 holdout_tasks=[],
                 promotion_margin_points=3.0,
+                holdout_promotion_margin_points=1.0,
             )
         },
     )
@@ -99,6 +102,7 @@ def test_render_frontier_json_includes_mode_configuration(tmp_path: Path) -> Non
 
     assert payload["repo_ref"] == "https://github.com/example/repo.git"
     assert payload["modes"]["contributor"]["promotion_margin_points"] == 3.0
+    assert payload["modes"]["contributor"]["holdout_promotion_margin_points"] == 1.0
 
 
 def test_render_frontier_manifest_shows_private_holdout_count_when_tasks_are_redacted(
@@ -118,6 +122,7 @@ def test_render_frontier_manifest_shows_private_holdout_count_when_tasks_are_red
                 holdout_task_count=10,
                 holdout_eval_pack="example__repo",
                 promotion_margin_points=2.0,
+                holdout_promotion_margin_points=1.0,
             )
         },
     )
@@ -126,6 +131,7 @@ def test_render_frontier_manifest_shows_private_holdout_count_when_tasks_are_red
 
     assert "Holdout tasks: private (10 tasks)" in rendered
     assert "Promotion margin: 2.0 points" in rendered
+    assert "Holdout margin: 1.0 points" in rendered
 
 
 def test_render_frontier_manifest_shows_random_public_sample_mode(tmp_path: Path) -> None:

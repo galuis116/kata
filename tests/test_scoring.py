@@ -118,3 +118,39 @@ def test_evaluate_promotion_uses_configured_margin() -> None:
 
     assert promotion_ready
     assert reason == "candidate cleared the primary score margin"
+
+
+def test_evaluate_promotion_requires_configured_holdout_margin() -> None:
+    primary = ChallengePoolSummary(
+        task_ids=["task-a"],
+        eval_run_summary="run_summary.json",
+        total_task_weight=1.0,
+        variant_successes={"frontier": 5, "candidate": 8},
+        variant_invalid_tasks={"frontier": 0, "candidate": 0},
+        variant_scores={"frontier": 50.0, "candidate": 80.0},
+        candidate_beats_frontier=True,
+        candidate_score_delta=30.0,
+    )
+    holdout = ChallengePoolSummary(
+        task_ids=["task-b"],
+        eval_run_summary="run_summary.json",
+        total_task_weight=1.0,
+        variant_successes={"frontier": 7, "candidate": 7},
+        variant_invalid_tasks={"frontier": 0, "candidate": 0},
+        variant_scores={"frontier": 70.0, "candidate": 70.0},
+        candidate_beats_frontier=False,
+        candidate_score_delta=0.0,
+    )
+
+    promotion_ready, reason = evaluate_promotion(
+        primary,
+        holdout,
+        promotion_margin_points=30.0,
+        holdout_promotion_margin_points=10.0,
+    )
+
+    assert not promotion_ready
+    assert (
+        reason
+        == "candidate cleared the primary score margin but did not clear the holdout margin"
+    )

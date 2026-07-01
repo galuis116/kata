@@ -37,6 +37,8 @@ Scores are only intended to be compared inside the same:
 
 See [evaluator-versioning.md](./evaluator-versioning.md) for the provenance
 requirements behind that rule.
+See [benchmark-evaluation.md](./benchmark-evaluation.md) for the benchmark
+oracle contract and current MVP boundary.
 
 ---
 
@@ -221,17 +223,22 @@ The decision should use:
 
 Promote the candidate only if all of the following are true:
 
-1. `candidate_primary_score > frontier_primary_score + m`
-2. `candidate_holdout_score >= frontier_holdout_score`
+1. `candidate_primary_score >= frontier_primary_score + m_primary`
+2. `candidate_holdout_score >= frontier_holdout_score + m_holdout`
 3. the candidate has no benchmark-integrity disqualification
 
 Where:
 
-- `m` is the primary improvement margin
+- `m_primary` is the primary improvement margin
+- `m_holdout` is the hidden holdout improvement margin
 
 Recommended public-MVP default:
 
-- `m = 3.0` points on the `0-100` scale
+- `m_primary = 30.0` points on the `0-100` scale
+- `m_holdout = 10.0` points on the `0-100` scale
+
+With 10 equal-weight binary tasks per pool, this means roughly `+3` public
+tasks and `+1` hidden task.
 
 This protects the frontier from noise and trivial score differences.
 
@@ -413,8 +420,8 @@ For the public MVP, the recommended defaults are:
 - pool score normalized to `[0, 100]`
 - separate primary and holdout scores
 - cost reported separately
-- promotion margin of `3.0` primary-score points
-- no promotion when holdout regresses
+- promotion margin of `30.0` primary-score points
+- holdout margin of `10.0` holdout-score points
 
 This gives Kata a scoring model that is:
 

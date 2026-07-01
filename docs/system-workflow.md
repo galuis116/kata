@@ -30,20 +30,21 @@ For the current production design, one duel uses `20` tasks total:
 - `10` private tasks
   - taken from the current live private holdout pool
 
-Scoring is task-count based:
+Each pool is scored independently on a normalized `0-100` scale:
 
-- each solved task gives `1` point
-- perfect score is `20`
+- each task produces quality in `[0, 1]`
+- equal-weight binary tasks behave like solved/not solved
+- with 10 equal-weight binary tasks, one task is worth 10 pool-score points
 
 Current promotion rule:
 
 - primary/public pool:
-  - candidate must score at least `king + 2`
+  - candidate must score at least `king + 30`
 - private/holdout pool:
-  - candidate must score at least `king`
+  - candidate must score at least `king + 10`
 
-So the candidate must both improve on the public side and avoid regressing on
-the hidden side.
+So, under the current 10-task binary pool design, the candidate needs roughly
+`+3` public tasks and `+1` hidden task versus the current king.
 
 ## End-To-End PR Flow
 

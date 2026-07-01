@@ -50,6 +50,7 @@ class ChallengeSummary:
     primary_pool_fingerprint: str | None
     holdout_pool_fingerprint: str | None
     promotion_margin_points: float
+    holdout_promotion_margin_points: float
     created_at: str
     primary: ChallengePoolSummary
     holdout: ChallengePoolSummary | None
@@ -188,6 +189,7 @@ def run_frontier_challenge(
         primary_summary,
         holdout_summary,
         promotion_margin_points=promotion_margin_points,
+        holdout_promotion_margin_points=mode_config.holdout_promotion_margin_points,
     )
     summary = ChallengeSummary(
         schema_version=4,
@@ -203,6 +205,7 @@ def run_frontier_challenge(
         primary_pool_fingerprint=current_primary_fingerprint,
         holdout_pool_fingerprint=current_holdout_fingerprint,
         promotion_margin_points=promotion_margin_points,
+        holdout_promotion_margin_points=mode_config.holdout_promotion_margin_points,
         created_at=datetime.now(UTC).isoformat(),
         primary=primary_summary,
         holdout=holdout_summary,
@@ -240,6 +243,9 @@ def render_challenge_summary(summary: ChallengeSummary) -> str:
         lines.extend(render_pool(summary.holdout))
     lines.append("")
     lines.append(f"Promotion margin: {summary.promotion_margin_points:.1f} points")
+    lines.append(
+        f"Holdout margin: {summary.holdout_promotion_margin_points:.1f} points"
+    )
     lines.append(f"Promotion ready: {'yes' if summary.promotion_ready else 'no'}")
     lines.append(f"Reason: {summary.promotion_reason}")
     return "\n".join(lines)
@@ -275,6 +281,9 @@ def load_challenge_summary(path: str) -> ChallengeSummary:
         holdout_pool_fingerprint=payload.get("holdout_pool_fingerprint"),
         promotion_margin_points=payload.get(
             "promotion_margin_points", DEFAULT_PROMOTION_MARGIN_POINTS
+        ),
+        holdout_promotion_margin_points=payload.get(
+            "holdout_promotion_margin_points", 0.0
         ),
         created_at=payload["created_at"],
         primary=parse_challenge_pool(payload["primary"]),
@@ -366,6 +375,7 @@ def evaluate_promotion(
     holdout: ChallengePoolSummary | None,
     *,
     promotion_margin_points: float = DEFAULT_PROMOTION_MARGIN_POINTS,
+    holdout_promotion_margin_points: float = 0.0,
 ) -> tuple[bool, str]:
     primary_delta = primary.candidate_score_delta
     if primary.variant_invalid_tasks.get("candidate", 0) > 0:
@@ -381,9 +391,15 @@ def evaluate_promotion(
         return True, "candidate cleared the primary score margin"
     if holdout.variant_invalid_tasks.get("candidate", 0) > 0:
         return False, "candidate has invalid holdout-pool task runs"
-    if holdout.variant_scores.get("candidate", 0.0) < holdout.variant_scores.get("frontier", 0.0):
-        return False, "candidate cleared the primary score margin but regressed on holdout"
-    return True, "candidate cleared the primary score margin and held on holdout"
+    holdout_delta = holdout.candidate_score_delta
+    if holdout_delta < holdout_promotion_margin_points:
+        if holdout_delta < 0:
+            return False, "candidate cleared the primary score margin but regressed on holdout"
+        return (
+            False,
+            "candidate cleared the primary score margin but did not clear the holdout margin",
+        )
+    return True, "candidate cleared the primary score margin and holdout margin"
 
 
 def promotion_reason(primary: ChallengePoolSummary, holdout: ChallengePoolSummary | None) -> str:

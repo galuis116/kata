@@ -155,9 +155,12 @@ For the current live design:
 Promotion gate:
 
 - public pool:
-  - candidate must score at least `king + 2`
+  - candidate must score at least `king + 30` normalized score points
 - private pool:
-  - candidate must score at least `king`
+  - candidate must score at least `king + 10` normalized score points
+
+With 10 equal-weight binary tasks per pool, this corresponds to roughly `+3`
+public tasks and `+1` hidden task.
 
 ## Stale Frontier Protection
 
