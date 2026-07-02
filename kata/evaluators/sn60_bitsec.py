@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import fmean
-from typing import Callable
+from typing import Callable, TypedDict
 
 from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files, write_bundle_files
 from kata.provenance import sha256_directory
@@ -54,6 +54,16 @@ class Sn60ReplicaResult:
     report_path: str
     evaluation_path: str
     execution_success: bool
+    evaluation_status: str
+    score: float
+    detection_rate: float
+    result: str | None
+    true_positives: int
+    total_expected: int
+    total_found: int
+
+
+class Sn60EvaluationMetrics(TypedDict):
     evaluation_status: str
     score: float
     detection_rate: float
@@ -426,7 +436,7 @@ def build_replica_result(
     )
 
 
-def extract_evaluation_metrics(evaluation_payload: dict[str, object]) -> dict[str, object]:
+def extract_evaluation_metrics(evaluation_payload: dict[str, object]) -> Sn60EvaluationMetrics:
     status_value = str(evaluation_payload.get("status", "error")).lower()
     result_payload = evaluation_payload.get("result")
     if not isinstance(result_payload, dict):
