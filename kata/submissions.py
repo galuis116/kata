@@ -254,6 +254,7 @@ def validate_submission(
     *,
     changed_paths: list[str] | None = None,
     repo_root: str | None = None,
+    public_root: str | None = None,
 ) -> SubmissionValidationResult:
     reasons: list[str] = []
     off_scope_paths: list[str] = []
@@ -335,16 +336,21 @@ def validate_submission(
 
     if metadata is not None:
         reasons.extend(validate_submission_metadata(metadata, descriptor))
-        reasons.extend(validate_submission_target(metadata))
+        reasons.extend(
+            validate_submission_target(metadata, public_root=public_root)
+        )
         if agent_path.exists():
             reasons.extend(
                 validate_submission_candidate(
                     metadata=metadata,
                     submission_root=descriptor.root,
+                    public_root=public_root,
                 )
             )
 
-    evaluator_entry = find_evaluator_pack_entry(descriptor.repo_pack, descriptor.mode)
+    evaluator_entry = find_evaluator_pack_entry(
+        descriptor.repo_pack, descriptor.mode, public_root=public_root
+    )
     return SubmissionValidationResult(
         submission_path=str(descriptor.root),
         repo_pack=descriptor.repo_pack,
@@ -421,28 +427,36 @@ def resolve_sn60_lane_king_hash(
     *,
     repo_pack: str,
     mode: str,
+    public_root: str | None = None,
 ) -> str | None:
     """Resolve the current king artifact hash for a registry-backed SN60 lane."""
-    if lane_king_state_path(lane_id).exists():
-        king = load_lane_king_state(lane_id)
+    if lane_king_state_path(lane_id, public_root=public_root).exists():
+        king = load_lane_king_state(lane_id, public_root=public_root)
         if king.current_king_artifact_hash:
             return king.current_king_artifact_hash
-    king_root = resolve_public_king_root(public_root=None, repo_pack=repo_pack, mode=mode)
+    king_root = resolve_public_king_root(
+        public_root=public_root, repo_pack=repo_pack, mode=mode
+    )
     if (king_root / SUBMISSION_AGENT_FILENAME).exists():
         return hash_submission_bundle(king_root)
     return None
 
 
-def sn60_lane_benchmark_is_current(lane_id: str, summary: ChallengeSummary) -> bool:
+def sn60_lane_benchmark_is_current(
+    lane_id: str,
+    summary: ChallengeSummary,
+    *,
+    public_root: str | None = None,
+) -> bool:
     """Freshness check against the lane's recorded benchmark snapshot and fingerprint."""
-    if not benchmark_snapshot_path(lane_id).exists():
+    if not benchmark_snapshot_path(lane_id, public_root=public_root).exists():
         return False
-    snapshot = load_benchmark_snapshot(lane_id)
+    snapshot = load_benchmark_snapshot(lane_id, public_root=public_root)
     expected_version = f"{snapshot.scorer_version}@{short_hash(snapshot.sandbox_commit_hash)}"
     if summary.evaluator_version != expected_version:
         return False
-    if challenge_state_path(lane_id).exists():
-        challenge_state = load_challenge_state(lane_id)
+    if challenge_state_path(lane_id, public_root=public_root).exists():
+        challenge_state = load_challenge_state(lane_id, public_root=public_root)
         if challenge_state.freshness_fingerprint != summary.primary_pool_fingerprint:
             return False
     return True
@@ -564,8 +578,10 @@ def inspect_pull_request(
 def verify_submission_result(
     submission_path: str,
     challenge_summary_path: str,
+    *,
+    public_root: str | None = None,
 ) -> SubmissionVerificationResult:
-    validation = validate_submission(submission_path)
+    validation = validate_submission(submission_path, public_root=public_root)
     if (
         not validation.is_valid
         or validation.metadata is None
@@ -579,7 +595,9 @@ def verify_submission_result(
     summary = load_challenge_summary(challenge_summary_path)
     candidate_hash = hash_submission_bundle(Path(validation.submission_path))
     evaluator_entry = find_evaluator_pack_entry(
-        validation.metadata.repo_pack, validation.metadata.mode
+        validation.metadata.repo_pack,
+        validation.metadata.mode,
+        public_root=public_root,
     )
     if evaluator_entry is None:
         raise ValueError(
@@ -591,11 +609,12 @@ def verify_submission_result(
             evaluator_entry.lane_id,
             repo_pack=validation.metadata.repo_pack,
             mode=validation.metadata.mode,
+            public_root=public_root,
         )
         or ""
     )
     lane_benchmark_is_current = sn60_lane_benchmark_is_current(
-        evaluator_entry.lane_id, summary
+        evaluator_entry.lane_id, summary, public_root=public_root
     )
     submission_matches = (
         summary.mode == validation.metadata.mode
@@ -718,7 +737,12 @@ def promote_submission_result(
     *,
     public_root: str | None = None,
 ) -> LanePromotionResult:
-    verification = verify_submission_result(submission_path, challenge_summary_path)
+    # Verify against the same root the promotion will be written to, so an
+    # explicit --public-root cannot check one lane state and publish to
+    # another.
+    verification = verify_submission_result(
+        submission_path, challenge_summary_path, public_root=public_root
+    )
     if not verification.auto_merge_ready:
         raise ValueError(
             "Submission is not safe to promote. "
@@ -728,7 +752,9 @@ def promote_submission_result(
             )
         )
     summary = load_challenge_summary(challenge_summary_path)
-    evaluator_entry = find_evaluator_pack_entry(verification.repo_pack, verification.mode)
+    evaluator_entry = find_evaluator_pack_entry(
+        verification.repo_pack, verification.mode, public_root=public_root
+    )
     if evaluator_entry is None:
         raise ValueError(
             "No evaluator-backed lane is registered for "
@@ -954,14 +980,21 @@ def validate_submission_metadata(
     return reasons
 
 
-def validate_submission_target(metadata: SubmissionMetadata) -> list[str]:
-    return validate_submission_lane(metadata.repo_pack, metadata.mode)
+def validate_submission_target(
+    metadata: SubmissionMetadata,
+    *,
+    public_root: str | None = None,
+) -> list[str]:
+    return validate_submission_lane(
+        metadata.repo_pack, metadata.mode, public_root=public_root
+    )
 
 
 def validate_submission_candidate(
     *,
     metadata: SubmissionMetadata,
     submission_root: Path,
+    public_root: str | None = None,
 ) -> list[str]:
     reasons: list[str] = []
     unexpected_paths = find_unexpected_bundle_paths(submission_root)
@@ -1010,14 +1043,20 @@ def validate_submission_candidate(
             metadata=metadata,
             submission_root=submission_root,
             bundle_files=bundle_files,
+            public_root=public_root,
         )
     )
     return dedupe(reasons)
 
 
-def find_evaluator_pack_entry(repo_pack: str, mode: str) -> PackRegistryEntry | None:
+def find_evaluator_pack_entry(
+    repo_pack: str,
+    mode: str,
+    *,
+    public_root: str | None = None,
+) -> PackRegistryEntry | None:
     try:
-        registry = load_pack_registry()
+        registry = load_pack_registry(public_root=public_root)
     except ValueError:
         return None
     for pack in registry.packs:
@@ -1026,8 +1065,13 @@ def find_evaluator_pack_entry(repo_pack: str, mode: str) -> PackRegistryEntry | 
     return None
 
 
-def validate_submission_lane(repo_pack: str, mode: str) -> list[str]:
-    entry = find_evaluator_pack_entry(repo_pack, mode)
+def validate_submission_lane(
+    repo_pack: str,
+    mode: str,
+    *,
+    public_root: str | None = None,
+) -> list[str]:
+    entry = find_evaluator_pack_entry(repo_pack, mode, public_root=public_root)
     if entry is None:
         return [
             "No evaluator-backed lane is registered in the pack registry for "
@@ -1367,19 +1411,23 @@ def validate_submission_not_copycat(
     metadata: SubmissionMetadata,
     submission_root: Path,
     bundle_files: dict[str, str],
+    public_root: str | None = None,
 ) -> list[str]:
-    evaluator_entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
+    evaluator_entry = find_evaluator_pack_entry(
+        metadata.repo_pack, metadata.mode, public_root=public_root
+    )
     if evaluator_entry is None:
         return []
     reasons = validate_submission_not_copycat_of_lane_king(
         lane_id=evaluator_entry.lane_id,
         submission_root=submission_root,
+        public_root=public_root,
     )
     candidate_agent = bundle_files.get(AGENT_ENTRY_FILENAME)
     if candidate_agent is not None:
         king_agent_path = (
             resolve_public_king_root(
-                public_root=None,
+                public_root=public_root,
                 repo_pack=metadata.repo_pack,
                 mode=metadata.mode,
             )
@@ -1399,10 +1447,11 @@ def validate_submission_not_copycat_of_lane_king(
     *,
     lane_id: str,
     submission_root: Path,
+    public_root: str | None = None,
 ) -> list[str]:
-    if not lane_king_state_path(lane_id).exists():
+    if not lane_king_state_path(lane_id, public_root=public_root).exists():
         return []
-    king = load_lane_king_state(lane_id)
+    king = load_lane_king_state(lane_id, public_root=public_root)
     if king.current_king_artifact_hash is None:
         return []
     candidate_hash = hash_submission_bundle(submission_root)

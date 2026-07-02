@@ -651,3 +651,40 @@ def test_verify_sn60_registry_lane_detects_superseded_challenge_fingerprint(
     verification = verify_submission_result(str(submission_root), str(summary_path))
     assert not verification.benchmark_is_current
     assert not verification.auto_merge_ready
+
+
+def test_verify_and_promote_honor_explicit_public_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root, submission_root, summary, summary_path = run_registry_lane_sn60_duel(
+        tmp_path, monkeypatch
+    )
+
+    # Point KATA_ROOT at an unrelated directory: an explicit public_root must
+    # verify against the same lane state the promotion is written to, not the
+    # ambient environment root.
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    verification = verify_submission_result(
+        str(submission_root),
+        str(summary_path),
+        public_root=str(public_root),
+    )
+    assert verification.king_is_current
+    assert verification.benchmark_is_current
+    assert verification.auto_merge_ready
+
+    result = promote_submission_result(
+        str(submission_root),
+        str(summary_path),
+        public_root=str(public_root),
+    )
+    assert result.lane_id == "sn60__bitsec"
+    king_state = load_lane_king_state("sn60__bitsec", public_root=str(public_root))
+    assert king_state.current_king_artifact_hash == summary.candidate_artifact_hash
+    # Nothing was written to the decoy KATA_ROOT.
+    assert not (decoy_root / "kings").exists()
+    assert not (decoy_root / "lanes").exists()
