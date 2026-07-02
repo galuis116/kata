@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from kata.public_artifacts import resolve_kata_root
+from kata.util import write_json
 
 LANES_DIRNAME = "lanes"
 PACK_REGISTRY_FILENAME = "registry.json"
@@ -373,9 +374,7 @@ def maybe_load(path: Path, parser):
 
 
 def write_json_dataclass(path: Path, value) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(value), indent=2) + "\n", encoding="utf-8")
-    return path
+    return write_json(path, asdict(value))
 
 
 def read_json(path: Path) -> dict[str, object]:

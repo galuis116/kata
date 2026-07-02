@@ -13,6 +13,7 @@ from typing import Callable
 
 from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files, write_bundle_files
 from kata.provenance import sha256_directory
+from kata.util import write_json
 
 SN60_BITSEC_EVALUATOR_ID = "sn60_bitsec"
 DEFAULT_SN60_DUEL_SCHEMA_VERSION = 1
@@ -221,9 +222,9 @@ def evaluate_variant(
                 sandbox_source=sandbox_source,
             )
             report_payload = execution_hook(context)
-            write_json_file(Path(context.report_path), report_payload)
+            write_json(Path(context.report_path), report_payload)
             evaluation_payload = evaluation_hook(context, report_payload)
-            write_json_file(Path(context.evaluation_path), evaluation_payload)
+            write_json(Path(context.evaluation_path), evaluation_payload)
             replica_results.append(
                 build_replica_result(context, report_payload, evaluation_payload)
             )
@@ -322,12 +323,9 @@ def hash_bundle_root(bundle_root: Path) -> str:
 
 
 def write_sn60_duel_summary(path: Path, summary: Sn60DuelSummary) -> None:
-    write_json_file(path, asdict(summary))
+    write_json(path, asdict(summary))
 
 
-def write_json_file(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def summarize_variant(
@@ -482,7 +480,7 @@ def build_default_evaluation_hook(source: Sn60SandboxSource) -> Sn60EvaluationHo
         report_payload: dict[str, object],
     ) -> dict[str, object]:
         if not Path(context.report_path).exists():
-            write_json_file(Path(context.report_path), report_payload)
+            write_json(Path(context.report_path), report_payload)
         completed = subprocess.run(
             build_bitsec_evaluation_command(context),
             cwd=source.sandbox_root,

@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Callable
 
 from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files
+from kata.ast_utils import (
+    find_module_async_function_def,
+    find_module_function_def,
+    function_supports_no_arg_invocation,
+)
 from kata.evaluators.sn60_bitsec import (
     Sn60ReplicaContext,
     Sn60SandboxSource,
@@ -18,6 +23,7 @@ from kata.evaluators.sn60_bitsec import (
     hash_bundle_root,
     stage_bundle,
 )
+from kata.util import dedupe, write_json
 
 SN60_SCREENING_SCHEMA_VERSION = 1
 SN60_SCREENING_STATUS_PASSED = "passed"
@@ -132,7 +138,7 @@ def run_sn60_screening(
             "success": False,
             "error": f"SN60 screening execution failed before report creation: {exc}",
         }
-    write_json_file(Path(context.report_path), report_payload)
+    write_json(Path(context.report_path), report_payload)
     execution_reasons = validate_sn60_screening_report(report_payload)
     result = build_screening_result(
         run_id=run_id,
@@ -270,13 +276,10 @@ def build_screening_result(
 
 
 def write_screening_result(path: Path, result: Sn60ScreeningResult) -> Path:
-    write_json_file(path, asdict(result))
+    write_json(path, asdict(result))
     return path
 
 
-def write_json_file(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def screening_result_payload(result: Sn60ScreeningResult) -> dict[str, object]:
@@ -306,49 +309,9 @@ def build_sn60_screening_id() -> str:
     return f"sn60-screening-{timestamp}-{secrets.token_hex(3)}"
 
 
-def find_module_function_def(
-    module_tree: ast.AST,
-    function_name: str,
-) -> ast.FunctionDef | None:
-    if not isinstance(module_tree, ast.Module):
-        return None
-    for node in module_tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == function_name:
-            return node
-    return None
 
 
-def find_module_async_function_def(
-    module_tree: ast.AST,
-    function_name: str,
-) -> ast.AsyncFunctionDef | None:
-    if not isinstance(module_tree, ast.Module):
-        return None
-    for node in module_tree.body:
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == function_name:
-            return node
-    return None
 
 
-def function_supports_no_arg_invocation(function_node: ast.FunctionDef) -> bool:
-    positional_args = [*function_node.args.posonlyargs, *function_node.args.args]
-    required_positional_args = len(positional_args) - len(function_node.args.defaults)
-    if required_positional_args > 0:
-        return False
-    required_keyword_only_args = [
-        arg
-        for arg, default in zip(function_node.args.kwonlyargs, function_node.args.kw_defaults)
-        if default is None
-    ]
-    return not required_keyword_only_args
 
 
-def dedupe(values: list[str]) -> list[str]:
-    unique: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        if value in seen:
-            continue
-        unique.append(value)
-        seen.add(value)
-    return unique

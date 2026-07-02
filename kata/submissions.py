@@ -19,6 +19,11 @@ from kata.agent_bundle import (
     validate_agent_manifest,
     write_agent_manifest,
 )
+from kata.ast_utils import (
+    find_module_async_function_def,
+    find_module_function_def,
+    function_supports_no_arg_invocation,
+)
 from kata.challenge import (
     SN60_VALIDATOR_MODEL,
     ChallengeSummary,
@@ -49,6 +54,7 @@ from kata.public_artifacts import (
     resolve_public_king_root,
 )
 from kata.screening import validate_sn60_static_screening
+from kata.util import dedupe
 
 SUBMISSIONS_DIRNAME = "submissions"
 SUBMISSION_SCHEMA_VERSION = 2
@@ -1206,15 +1212,6 @@ def normalize_changed_paths(changed_paths: list[str]) -> list[str]:
     return normalized
 
 
-def dedupe(values: list[str]) -> list[str]:
-    unique: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        if value in seen:
-            continue
-        unique.append(value)
-        seen.add(value)
-    return unique
 
 
 def hash_submission_bundle(root: Path) -> str:
@@ -1344,17 +1341,7 @@ def validate_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[str
             ]
         return [required_submission_entrypoint_reason("miner")]
 
-    positional_args = [*agent_main_fn.args.posonlyargs, *agent_main_fn.args.args]
-    required_positional_args = len(positional_args) - len(agent_main_fn.args.defaults)
-    if required_positional_args > 0:
-        return ["Submission agent must support no-argument invocation: agent_main()."]
-
-    required_keyword_only_args = [
-        arg.arg
-        for arg, default in zip(agent_main_fn.args.kwonlyargs, agent_main_fn.args.kw_defaults)
-        if default is None
-    ]
-    if required_keyword_only_args:
+    if not function_supports_no_arg_invocation(agent_main_fn):
         return ["Submission agent must support no-argument invocation: agent_main()."]
 
     for return_node in iter_non_nested_function_returns(agent_main_fn):
@@ -1407,28 +1394,8 @@ def dict_contains_string_key(node: ast.Dict, key_name: str) -> bool:
     return False
 
 
-def find_module_function_def(
-    module_tree: ast.AST,
-    function_name: str,
-) -> ast.FunctionDef | None:
-    if not isinstance(module_tree, ast.Module):
-        return None
-    for node in module_tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == function_name:
-            return node
-    return None
 
 
-def find_module_async_function_def(
-    module_tree: ast.AST,
-    function_name: str,
-) -> ast.AsyncFunctionDef | None:
-    if not isinstance(module_tree, ast.Module):
-        return None
-    for node in module_tree.body:
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == function_name:
-            return node
-    return None
 
 
 def validate_submission_not_copycat(
