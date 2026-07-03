@@ -242,6 +242,57 @@ def test_validate_submission_rejects_sampling_override(tmp_path, monkeypatch) ->
     assert any("sampling parameters" in reason for reason in reasons)
 
 
+def test_validate_submission_rejects_sampling_override_via_kwargs_unpack(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    reasons = validation_reasons(
+        tmp_path,
+        monkeypatch,
+        agent_source=(
+            "overrides = {\"temperature\": 0.0, \"seed\": 42}\n"
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    client.chat.completions.create(model=\"x\", messages=[], **overrides)\n"
+            "    return {\"vulnerabilities\": []}\n"
+        ),
+    )
+    assert any("sampling parameters" in reason for reason in reasons)
+    assert any("`temperature`" in reason or "`seed`" in reason for reason in reasons)
+
+
+def test_validate_submission_rejects_sampling_override_via_inline_dict_unpack(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    reasons = validation_reasons(
+        tmp_path,
+        monkeypatch,
+        agent_source=(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    call(**{\"top_p\": 0.9})\n"
+            "    return {\"vulnerabilities\": []}\n"
+        ),
+    )
+    assert any("sampling parameters" in reason for reason in reasons)
+    assert any("`top_p`" in reason for reason in reasons)
+
+
+def test_validate_submission_rejects_sampling_override_via_dict_constructor(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    reasons = validation_reasons(
+        tmp_path,
+        monkeypatch,
+        agent_source=(
+            "def agent_main(project_dir=None, inference_api=None):\n"
+            "    call(**dict(temperature=0.2))\n"
+            "    return {\"vulnerabilities\": []}\n"
+        ),
+    )
+    assert any("sampling parameters" in reason for reason in reasons)
+
+
 def test_validate_submission_rejects_provider_endpoint(tmp_path, monkeypatch) -> None:
     reasons = validation_reasons(
         tmp_path,

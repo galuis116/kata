@@ -1406,12 +1406,76 @@ def validate_bundle_sampling_policy(parsed_trees: dict[str, ast.AST]) -> list[st
             if not isinstance(node, ast.Call):
                 continue
             for keyword in node.keywords:
-                if keyword.arg in FORBIDDEN_SAMPLING_NAMES:
+                forbidden_names = find_forbidden_sampling_names_in_call_keyword(
+                    keyword,
+                    tree,
+                )
+                for forbidden_name in forbidden_names:
                     reasons.append(
                         "Submission bundle must not control model sampling parameters "
-                        f"directly: {relative_path} uses `{keyword.arg}`."
+                        f"directly: {relative_path} uses `{forbidden_name}`."
                     )
-    return reasons
+    return dedupe(reasons)
+
+
+def find_forbidden_sampling_names_in_call_keyword(
+    keyword: ast.keyword,
+    tree: ast.AST,
+) -> list[str]:
+    if keyword.arg in FORBIDDEN_SAMPLING_NAMES:
+        return [keyword.arg]
+    if keyword.arg is not None:
+        return []
+    return find_forbidden_sampling_names_in_expression(keyword.value, tree)
+
+
+def find_forbidden_sampling_names_in_expression(
+    node: ast.AST,
+    tree: ast.AST,
+) -> list[str]:
+    if isinstance(node, ast.Dict):
+        return find_forbidden_sampling_names_in_dict_literal(node, tree)
+    if isinstance(node, ast.Name):
+        forbidden: list[str] = []
+        for assignment_value in find_name_assignment_values(tree, node.id):
+            forbidden.extend(
+                find_forbidden_sampling_names_in_expression(assignment_value, tree)
+            )
+        return dedupe(forbidden)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict":
+        forbidden: list[str] = []
+        for dict_keyword in node.keywords:
+            forbidden.extend(
+                find_forbidden_sampling_names_in_call_keyword(dict_keyword, tree)
+            )
+        return dedupe(forbidden)
+    return []
+
+
+def find_forbidden_sampling_names_in_dict_literal(
+    node: ast.Dict,
+    tree: ast.AST,
+) -> list[str]:
+    forbidden: list[str] = []
+    for key, value in zip(node.keys, node.values, strict=False):
+        if key is None:
+            forbidden.extend(find_forbidden_sampling_names_in_expression(value, tree))
+            continue
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            if key.value in FORBIDDEN_SAMPLING_NAMES:
+                forbidden.append(key.value)
+    return dedupe(forbidden)
+
+
+def find_name_assignment_values(tree: ast.AST, name: str) -> list[ast.AST]:
+    values: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == name:
+                values.append(node.value)
+    return values
 
 
 def iter_non_nested_function_returns(function_node: ast.FunctionDef):
