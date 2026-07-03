@@ -230,6 +230,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional Kata repo root used to resolve changed paths.",
     )
     submission_validate.add_argument(
+        "--public-root",
+        default=None,
+        help=(
+            "Optional Kata root that owns lane state and kings. Defaults to "
+            "KATA_ROOT or the current working directory."
+        ),
+    )
+    submission_validate.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON instead of text.",
@@ -255,6 +263,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--changed-path-file",
         default=None,
         help="Optional newline-delimited file of changed paths from the PR diff.",
+    )
+    submission_inspect.add_argument(
+        "--public-root",
+        default=None,
+        help=(
+            "Optional Kata root that owns lane state and kings. Defaults to "
+            "KATA_ROOT or the current working directory."
+        ),
     )
     submission_inspect.add_argument(
         "--json",
@@ -424,10 +440,16 @@ def handle_submission_init(args: argparse.Namespace) -> int:
 
 def handle_submission_validate(args: argparse.Namespace) -> int:
     changed_paths = collect_changed_paths(args.changed_path, args.changed_path_file)
+    public_root = (
+        str(Path(args.public_root).expanduser().resolve())
+        if args.public_root
+        else None
+    )
     result = validate_submission(
         args.path,
         changed_paths=changed_paths,
         repo_root=args.repo_root,
+        public_root=public_root,
     )
     print(
         render_submission_json(result)
@@ -438,9 +460,15 @@ def handle_submission_validate(args: argparse.Namespace) -> int:
 
 
 def handle_submission_inspect(args: argparse.Namespace) -> int:
+    public_root = (
+        str(Path(args.public_root).expanduser().resolve())
+        if args.public_root
+        else None
+    )
     result = inspect_pull_request(
         repo_root=args.repo_root,
         changed_paths=collect_changed_paths(args.changed_path, args.changed_path_file),
+        public_root=public_root,
     )
     print(
         render_submission_json(result)

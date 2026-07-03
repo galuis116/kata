@@ -292,6 +292,71 @@ def test_inspect_pull_request_accepts_single_submission_scope(
     assert result.submission_id == "alice-20260702-01"
 
 
+def test_inspect_pull_request_honors_explicit_public_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    changed_paths = [
+        "submissions/sn60__bitsec/miner/alice-20260702-01/agent.py",
+        "submissions/sn60__bitsec/miner/alice-20260702-01/submission.json",
+    ]
+    invalid = inspect_pull_request(
+        repo_root=str(tmp_path),
+        changed_paths=changed_paths,
+    )
+    assert invalid.action == PR_ACTION_CLOSE_INVALID
+    assert any("lane is registered" in reason for reason in invalid.reasons)
+
+    result = inspect_pull_request(
+        repo_root=str(tmp_path),
+        changed_paths=changed_paths,
+        public_root=str(public_root),
+    )
+    assert result.action == PR_ACTION_EVALUATE
+    assert result.submission_id == "alice-20260702-01"
+
+
+def test_validate_submission_honors_explicit_public_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    monkeypatch.setenv("KATA_ROOT", str(public_root))
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-01",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(VALID_MINER_AGENT, encoding="utf-8")
+
+    decoy_root = tmp_path / "decoy-root"
+    decoy_root.mkdir()
+    monkeypatch.setenv("KATA_ROOT", str(decoy_root))
+
+    invalid = validate_submission(str(submission_root), repo_root=str(repo_root))
+    assert not invalid.is_valid
+    assert any("lane is registered" in reason for reason in invalid.reasons)
+
+    result = validate_submission(
+        str(submission_root),
+        repo_root=str(repo_root),
+        public_root=str(public_root),
+    )
+    assert result.is_valid
+    assert result.evaluator_id == "sn60_bitsec"
+
+
 def test_decide_submission_action_merges_registry_winner(tmp_path, monkeypatch) -> None:
     _, submission_root, _, summary_path = run_registry_lane_sn60_duel(
         tmp_path, monkeypatch
